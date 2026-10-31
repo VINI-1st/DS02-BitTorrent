@@ -1,7 +1,7 @@
 # Hợp đồng 1 & 4 – Metainfo và CLI của peer (chủ sở hữu: B)
 
 Tài liệu này chốt hai hợp đồng do B viết (mục 2 trong `docs/work-division.md`).
-A và C đọc để dùng; muốn đổi thì mở issue / pull request và cần cả ba đồng ý.
+A và C đọc để dùng; muốn đổi thì báo cho B và cần cả ba đồng ý.
 
 ## Hợp đồng 1 – Metainfo (`*.torrent.json`)
 
