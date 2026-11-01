@@ -117,7 +117,7 @@ Phần không thuộc module nào được chia theo cùng một quy tắc: mỗ
 - A dùng script gọi API tracker thay cho peer thật (`FakePeer`).
 - B dùng `FakeTransport` trong bộ nhớ và tracker giả trả danh sách peer cố định.
 - C dùng `StubPeer` mô phỏng đúng CLI và log: giả vờ tải xong sau một khoảng thời gian.
-- Khi một module thật xong, người sở hữu mở pull request, người dùng đổi mock sang thật trong một commit riêng.
+- Khi một module thật xong, người dùng đổi mock sang module thật.
 
 ## 8. Tổng hợp khối lượng và quy ước làm việc
 
@@ -131,6 +131,5 @@ Mỗi người có 7 đầu việc kỹ thuật cùng một phần báo cáo, sl
 
 **Quy ước làm việc:**
 
-- Mỗi module nằm trong thư mục riêng, chỉ chủ module được sửa trực tiếp; muốn đổi thì mở issue hoặc pull request cho chủ module.
-- Mỗi đầu việc một nhánh, gộp vào `main` qua pull request đã được người review chéo duyệt (mục 6).
+- Mỗi module nằm trong thư mục riêng, chỉ chủ module được sửa trực tiếp; muốn đổi thì báo chủ module.
 - Thay đổi hợp đồng giao tiếp (mục 2) cần cả ba đồng ý và được ghi lại trong `docs/`.
