@@ -1,0 +1,32 @@
+name: "high_churn"
+description: "Kịch bản C2/C3: Biến động mạng cao (Poisson + Pareto), giới hạn băng thông và lỗi Tracker"
+tracker:
+  host: "127.0.0.1"
+  port: 8000
+torrent:
+  file_name: "sample_data.bin"
+  file_size_bytes: 1048576
+  piece_length: 262144
+swarm:
+  num_seeds: 1
+  num_leechers: 2
+  base_port: 9001
+  max_up_kbps: 256
+simulation:
+  duration_sec: 12
+  random_seed: 42
+churn:
+  enabled: true
+  mode: "poisson"
+  arrival_rate_per_sec: 0.6
+  mean_lifetime_sec: 3.5
+  lifetime_dist: "pareto"
+  crash_prob: 0.5
+  max_dynamic_peers: 5
+netem:
+  default_max_up_kbps: 256
+  latency_ms: 80
+  tracker_fault:
+    enabled: true
+    crash_at_sec: 3.0
+    downtime_sec: 2.0
