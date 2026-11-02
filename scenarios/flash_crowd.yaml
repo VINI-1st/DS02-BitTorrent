@@ -1,0 +1,27 @@
+name: "flash_crowd"
+description: "Kịch bản Flash Crowd: 5 Leechers ập vào cùng lúc ở giây thứ 1.5"
+tracker:
+  host: "127.0.0.1"
+  port: 8000
+torrent:
+  file_name: "sample_data.bin"
+  file_size_bytes: 1048576
+  piece_length: 262144
+swarm:
+  num_seeds: 1
+  num_leechers: 1
+  base_port: 9001
+  max_up_kbps: 512
+simulation:
+  duration_sec: 10
+  random_seed: 42
+churn:
+  enabled: true
+  mode: "flash_crowd"
+  burst_time_sec: 1.5
+  burst_size: 5
+  mass_depart_time_sec: 7.0
+  crash_prob: 0.4
+netem:
+  default_max_up_kbps: 512
+  latency_ms: 20

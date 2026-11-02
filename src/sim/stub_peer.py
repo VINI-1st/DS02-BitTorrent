@@ -37,7 +37,8 @@ def parse_args():
     parser.add_argument("--port", type=int, required=True, help="Listening port")
     parser.add_argument("--dir", required=True, help="Working directory for peer")
     parser.add_argument("--role", choices=["seed", "leech"], required=True, help="Peer role")
-    parser.add_argument("--max-up-kbps", type=int, default=0, help="Max upload bandwidth in kbps")
+    parser.add_argument("--max-up-kbps", type=int, default=512, help="Max upload bandwidth in kbps")
+    parser.add_argument("--latency-ms", type=int, default=0, help="Simulated network latency in ms")
     parser.add_argument("--peer-id", default=None, help="Optional explicit peer ID")
     return parser.parse_args()
 
@@ -52,6 +53,15 @@ def load_num_chunks(torrent_path: str) -> tuple[int, int]:
     return 4, 262144
 
 
+def compute_transfer_delay(piece_length_bytes: int, max_up_kbps: int, latency_ms: int, jitter: float) -> float:
+    # Tính thời gian truyền dựa trên băng thông cấu hình (kbps = kilobits/sec) và độ trễ (ms)
+    effective_kbps = max(max_up_kbps, 64)
+    transfer_sec = (piece_length_bytes * 8 / 1024.0) / effective_kbps
+    # Nhân hệ số 0.25 để mô phỏng tải songong nhanh gọn trong lúc test
+    scaled_sec = transfer_sec * 0.25 + (latency_ms / 1000.0) + jitter
+    return max(0.15, scaled_sec)
+
+
 def main():
     args = parse_args()
     peer_id = args.peer_id or f"{args.role}-{args.port}"
@@ -60,20 +70,26 @@ def main():
     num_chunks, piece_length = load_num_chunks(args.torrent)
     rng = random.Random(args.port)
 
-    # 1. Báo hiệu bắt đầu khởi chạy và kết nối Tracker thành công
     log_event(
         peer_id,
         "started",
-        meta={"role": args.role, "port": args.port, "max_up_kbps": args.max_up_kbps},
+        meta={
+            "role": args.role,
+            "port": args.port,
+            "max_up_kbps": args.max_up_kbps,
+            "latency_ms": args.latency_ms,
+        },
     )
-    time.sleep(0.2)
+    time.sleep(0.15 + args.latency_ms / 1000.0)
     log_event(peer_id, "announce_ok", meta={"num_chunks": num_chunks})
 
     if args.role == "seed":
-        # Seeder giữ kết nối và liên tục giả lập việc upload các mảnh (chunks)
         chunk_order = list(range(num_chunks))
         while running:
-            time.sleep(rng.uniform(0.4, 0.8))
+            delay = compute_transfer_delay(
+                piece_length, args.max_up_kbps, args.latency_ms, rng.uniform(0.0, 0.15)
+            )
+            time.sleep(delay)
             if not running:
                 break
             c_idx = rng.choice(chunk_order)
@@ -84,7 +100,6 @@ def main():
                 meta={"bytes": piece_length},
             )
     else:
-        # Leecher tải lần lượt các mảnh theo thứ tự ngẫu nhiên cho đến khi đủ
         chunks_to_download = list(range(num_chunks))
         rng.shuffle(chunks_to_download)
 
@@ -92,8 +107,13 @@ def main():
             if not running:
                 log_event(peer_id, "stopped", meta={"reason": "interrupted"})
                 sys.exit(1)
-            delay = rng.uniform(0.3, 0.9)
+            delay = compute_transfer_delay(
+                piece_length, args.max_up_kbps, args.latency_ms, rng.uniform(0.0, 0.15)
+            )
             time.sleep(delay)
+            if not running:
+                log_event(peer_id, "stopped", meta={"reason": "interrupted"})
+                sys.exit(1)
             log_event(
                 peer_id,
                 "piece_done",
@@ -101,7 +121,6 @@ def main():
                 meta={"bytes": piece_length, "from_peer": "seed-9001"},
             )
 
-        # Tạo file giả sau khi tải xong và thoát với mã 0 (thành công)
         out_file = Path(args.dir) / "downloaded_file.bin"
         out_file.write_bytes(b"0" * (num_chunks * piece_length))
         log_event(peer_id, "completed", meta={"total_chunks": num_chunks})
