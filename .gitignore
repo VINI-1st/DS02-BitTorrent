@@ -221,3 +221,4 @@ __marimo__/
 .env
 sim_workspace/
 logs/
+results/*.csv
