@@ -1,0 +1,17 @@
+name: "demo_live"
+description: "Kịch bản C7: Trình diễn trực tiếp 7 tình huống bắt buộc với màn hình Dashboard"
+tracker:
+  host: "127.0.0.1"
+  port: 8000
+torrent:
+  file_name: "ptit_distributed_systems.bin"
+  file_size_bytes: 1048576
+  piece_length: 262144
+swarm:
+  num_seeds: 2
+  num_leechers: 3
+  base_port: 9001
+  max_up_kbps: 256
+simulation:
+  duration_sec: 15
+  random_seed: 42
