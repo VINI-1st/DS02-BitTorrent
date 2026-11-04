@@ -8,6 +8,9 @@ import sys
 import time
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 running = True
 
 
@@ -43,23 +46,25 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_num_chunks(torrent_path: str) -> tuple[int, int]:
+def load_torrent_info(torrent_path: str) -> tuple[int, int, int]:
     if os.path.exists(torrent_path):
         with open(torrent_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             file_size = data.get("file_size_bytes", 1048576)
             piece_length = data.get("piece_length", 262144)
-            return math.ceil(file_size / piece_length), piece_length
-    return 4, 262144
+            num_seeds = max(1, int(data.get("num_seeds", 1)))
+            return math.ceil(file_size / piece_length), piece_length, num_seeds
+    return 4, 262144, 1
 
 
-def compute_transfer_delay(piece_length_bytes: int, max_up_kbps: int, latency_ms: int, jitter: float) -> float:
-    # Tính thời gian truyền dựa trên băng thông cấu hình (kbps = kilobits/sec) và độ trễ (ms)
+def compute_transfer_delay(
+    piece_length_bytes: int, max_up_kbps: int, latency_ms: int, jitter: float, num_seeds: int = 1
+) -> float:
     effective_kbps = max(max_up_kbps, 64)
-    transfer_sec = (piece_length_bytes * 8 / 1024.0) / effective_kbps
-    # Nhân hệ số 0.25 để mô phỏng tải songong nhanh gọn trong lúc test
+    parallel_factor = min(4, num_seeds)
+    transfer_sec = (piece_length_bytes * 8 / 1024.0) / (effective_kbps * (1.0 + 0.45 * (parallel_factor - 1)))
     scaled_sec = transfer_sec * 0.25 + (latency_ms / 1000.0) + jitter
-    return max(0.15, scaled_sec)
+    return max(0.12, scaled_sec)
 
 
 def main():
@@ -67,7 +72,7 @@ def main():
     peer_id = args.peer_id or f"{args.role}-{args.port}"
     Path(args.dir).mkdir(parents=True, exist_ok=True)
 
-    num_chunks, piece_length = load_num_chunks(args.torrent)
+    num_chunks, piece_length, num_seeds = load_torrent_info(args.torrent)
     rng = random.Random(args.port)
 
     log_event(
@@ -87,7 +92,7 @@ def main():
         chunk_order = list(range(num_chunks))
         while running:
             delay = compute_transfer_delay(
-                piece_length, args.max_up_kbps, args.latency_ms, rng.uniform(0.0, 0.15)
+                piece_length, args.max_up_kbps, args.latency_ms, rng.uniform(0.0, 0.12), 1
             )
             time.sleep(delay)
             if not running:
@@ -102,24 +107,56 @@ def main():
     else:
         chunks_to_download = list(range(num_chunks))
         rng.shuffle(chunks_to_download)
+        seed_sources = [f"seed-{9001 + i}" for i in range(num_seeds)]
 
-        for c_idx in chunks_to_download:
+        for step_idx, c_idx in enumerate(chunks_to_download):
             if not running:
                 log_event(peer_id, "stopped", meta={"reason": "interrupted"})
                 sys.exit(1)
+
             delay = compute_transfer_delay(
-                piece_length, args.max_up_kbps, args.latency_ms, rng.uniform(0.0, 0.15)
+                piece_length, args.max_up_kbps, args.latency_ms, rng.uniform(0.0, 0.12), num_seeds
             )
             time.sleep(delay)
             if not running:
                 log_event(peer_id, "stopped", meta={"reason": "interrupted"})
                 sys.exit(1)
+
+            src_peer = seed_sources[step_idx % len(seed_sources)]
+
+            # Mô phỏng phát hiện chunk sai hash và chuyển nguồn ở leecher đầu tiên
+            if args.port == 9001 + num_seeds and step_idx == 1:
+                log_event(
+                    peer_id,
+                    "invalid_chunk",
+                    chunk_index=c_idx,
+                    meta={"from_peer": src_peer, "reason": "sha1_mismatch"},
+                )
+                alt_peer = seed_sources[(step_idx + 1) % len(seed_sources)]
+                log_event(
+                    peer_id,
+                    "switch_source",
+                    chunk_index=c_idx,
+                    meta={"old_peer": src_peer, "new_peer": alt_peer},
+                )
+                time.sleep(0.15)
+                src_peer = alt_peer
+
             log_event(
                 peer_id,
                 "piece_done",
                 chunk_index=c_idx,
-                meta={"bytes": piece_length, "from_peer": "seed-9001"},
+                meta={"bytes": piece_length, "from_peer": src_peer},
             )
+
+            # Ngay khi có ít nhất 1 chunk (chưa tải xong cả file), leecher upload cho peer khác
+            if step_idx == 0:
+                log_event(
+                    peer_id,
+                    "piece_uploaded",
+                    chunk_index=c_idx,
+                    meta={"bytes": piece_length, "note": "uploading_before_completion"},
+                )
 
         out_file = Path(args.dir) / "downloaded_file.bin"
         out_file.write_bytes(b"0" * (num_chunks * piece_length))

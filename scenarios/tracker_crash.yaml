@@ -1,0 +1,24 @@
+name: "tracker_crash"
+description: "Kịch bản C6: Tracker sập giữa chừng và khởi động lại, swarm tự phục hồi"
+tracker:
+  host: "127.0.0.1"
+  port: 8000
+torrent:
+  file_name: "sample_data.bin"
+  file_size_bytes: 1048576
+  piece_length: 262144
+swarm:
+  num_seeds: 2
+  num_leechers: 3
+  base_port: 9001
+  max_up_kbps: 512
+simulation:
+  duration_sec: 15
+  random_seed: 42
+netem:
+  default_max_up_kbps: 512
+  latency_ms: 20
+  tracker_fault:
+    enabled: true
+    crash_at_sec: 1.5
+    downtime_sec: 2.5

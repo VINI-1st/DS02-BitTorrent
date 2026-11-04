@@ -41,12 +41,13 @@ def write_sim_event(log_file, lock: threading.Lock, peer_id: str, event: str, me
         print(line_str)
 
 
-def create_dummy_torrent(work_dir: Path, torrent_cfg: dict, tracker_cfg: dict) -> Path:
+def create_dummy_torrent(work_dir: Path, torrent_cfg: dict, tracker_cfg: dict, num_seeds: int = 1) -> Path:
     torrent_path = work_dir / "sample.torrent.json"
     metainfo = {
         "file_name": torrent_cfg.get("file_name", "sample_data.bin"),
         "file_size_bytes": torrent_cfg.get("file_size_bytes", 1048576),
         "piece_length": torrent_cfg.get("piece_length", 262144),
+        "num_seeds": num_seeds,
         "tracker_url": f"http://{tracker_cfg.get('host', '127.0.0.1')}:{tracker_cfg.get('port', 8000)}",
     }
     torrent_path.write_text(json.dumps(metainfo, indent=2), encoding="utf-8")
