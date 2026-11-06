@@ -44,6 +44,7 @@ import yaml  # noqa: E402
 
 from src.sim.churn import ChurnEvent, build_schedule, schedule_fingerprint  # noqa: E402
 from src.sim.common import (  # noqa: E402
+    EVENT_ALIASES,
     REPO_ROOT,
     TorrentInfo,
     build_metainfo,
@@ -289,6 +290,11 @@ class ScenarioRunner:
                 rec["meta"] = meta
             if rec["peer_id"] != info.node:
                 meta["node"] = info.node  # real peers may use 20-char ids
+            if rec.get("event") in EVENT_ALIASES:
+                meta["original_event"] = rec["event"]
+                rec["event"] = EVENT_ALIASES[rec["event"]]
+            if isinstance(rec.get("ts"), (int, float)):
+                rec["ts"] = float(rec["ts"])
             self.emit(rec)
         try:
             info.proc.wait(timeout=5)
