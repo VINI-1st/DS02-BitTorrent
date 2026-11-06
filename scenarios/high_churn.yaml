@@ -1,32 +1,38 @@
+# C6 – Kịch bản 3: High churn – peer đến theo Poisson, sống theo Pareto, 50% rời bằng cách sập
 name: "high_churn"
-description: "Kịch bản C2/C3: Biến động mạng cao (Poisson + Pareto), giới hạn băng thông và lỗi Tracker"
+description: "1 seed + 2 leecher tĩnh; leecher động đến theo Poisson (λ=0.7/s), thời gian sống Pareto (TB 8s, α=1.8), 50% crash"
+
 tracker:
   host: "127.0.0.1"
   port: 8000
+  interval_sec: 2
+
 torrent:
   file_name: "sample_data.bin"
-  file_size_bytes: 1048576
-  piece_length: 262144
+  file_size_bytes: 2097152
+  piece_length: 131072
+
 swarm:
   num_seeds: 1
   num_leechers: 2
   base_port: 9001
   max_up_kbps: 256
-simulation:
-  duration_sec: 12
-  random_seed: 42
+
 churn:
   enabled: true
   mode: "poisson"
-  arrival_rate_per_sec: 0.6
-  mean_lifetime_sec: 3.5
-  lifetime_dist: "pareto"
-  crash_prob: 0.5
-  max_dynamic_peers: 5
+  arrival_rate_per_sec: 0.7
+  mean_lifetime_sec: 8.0
+  lifetime_dist: "pareto"   # exponential | pareto
+  pareto_alpha: 1.8
+  crash_prob: 0.5           # 50% sập (kill), 50% rời đàng hoàng (SIGTERM/CTRL_BREAK)
+  max_dynamic_peers: 10
+  port_offset: 100          # leecher động dùng cổng 9101, 9102, ...
+
 netem:
-  default_max_up_kbps: 256
-  latency_ms: 80
-  tracker_fault:
-    enabled: true
-    crash_at_sec: 3.0
-    downtime_sec: 2.0
+  latency_ms: 50
+
+simulation:
+  duration_sec: 35
+  random_seed: 42
+  stop_when_complete: true

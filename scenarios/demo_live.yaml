@@ -1,0 +1,35 @@
+# C7 – Kịch bản trình diễn trực tiếp: kích hoạt đủ 7 tình huống bắt buộc (mục 6.4)
+name: "demo_live"
+description: "3 seed (seed-9002 bị dừng giữa chừng, seed-9003 gửi chunk hỏng) + 3 leecher khởi động lệch nhau"
+
+tracker:
+  host: "127.0.0.1"
+  port: 8000
+  interval_sec: 2
+
+torrent:
+  file_name: "ptit_distributed_systems.bin"
+  file_size_bytes: 2097152
+  piece_length: 131072
+
+swarm:
+  num_seeds: 3
+  num_leechers: 3
+  base_port: 9001
+  max_up_kbps: 96
+  leech_start_delay_sec: 1.0     # leecher sau tải được từ leecher trước -> upload trước khi xong
+
+netem:
+  latency_ms: 30
+
+faults:
+  kill_peers:
+    - {target: "seed-9002", at_sec: 4.0, mode: crash}   # (4) dừng một nguồn giữa chừng
+  corrupt_peers:
+    seed-9003: "all"                                    # (6) nguồn gửi dữ liệu sai hash
+
+simulation:
+  duration_sec: 60
+  random_seed: 42
+  stop_when_complete: true
+  linger_after_complete_sec: 1.0

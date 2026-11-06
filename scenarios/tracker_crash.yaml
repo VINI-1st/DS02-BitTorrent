@@ -1,0 +1,33 @@
+# C6 – Kịch bản 5: Tracker crash – tiến trình tracker bị kill giữa chừng rồi khởi động lại
+name: "tracker_crash"
+description: "2 seed, 3 leecher; tracker bị kill ở giây 3, sống lại ở giây 8; 2 leecher mới đến ở giây 4 (lúc tracker đang sập)"
+
+tracker:
+  host: "127.0.0.1"
+  port: 8000
+  interval_sec: 2
+
+torrent:
+  file_name: "sample_data.bin"
+  file_size_bytes: 2097152
+  piece_length: 131072
+
+swarm:
+  num_seeds: 2
+  num_leechers: 3
+  base_port: 9001
+  max_up_kbps: 128
+  late_leechers:
+    - {at_sec: 4.0, count: 2}   # đến khi tracker đang sập -> không bootstrap được tới khi tracker sống lại
+
+netem:
+  latency_ms: 20
+  tracker_fault:
+    enabled: true
+    crash_at_sec: 3.0
+    downtime_sec: 5.0
+
+simulation:
+  duration_sec: 45
+  random_seed: 42
+  stop_when_complete: true
