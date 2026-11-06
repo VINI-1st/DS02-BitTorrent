@@ -68,8 +68,18 @@ EXTENSION_EVENTS: frozenset[str] = frozenset(
         "fault_kill_peer",
         "tracker_crashed",
         "tracker_restarted",
+        # emitted by Role A's real tracker (src/tracker)
+        "http_request",
+        "peers_expired",
     }
 )
+
+#: Event-name aliases accepted from real implementations and rewritten by the
+#: launcher to the Contract 5 name (the original is kept in meta.original_event).
+EVENT_ALIASES: dict[str, str] = {
+    "tracker_started": "started",
+    "tracker_stopped": "stopped",
+}
 
 ALL_EVENTS: frozenset[str] = CONTRACT_EVENTS | EXTENSION_EVENTS
 REQUIRED_FIELDS: tuple[str, ...] = ("ts", "peer_id", "event", "chunk_index")
