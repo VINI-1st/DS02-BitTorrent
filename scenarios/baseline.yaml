@@ -1,22 +1,27 @@
+# C6 – Kịch bản 1: Baseline (cơ sở). Định dạng: docs/log-and-scenario-spec.md
 name: "baseline"
-description: "Kịch bản cơ sở: 1 Seeder và 3 Leechers tải file 1MB (4 chunks)"
+description: "1 seed, 3 leecher, mạng ổn định – mốc so sánh cho mọi kịch bản khác"
 
 tracker:
-  host: "127.0.0.1"        
-  port: 8000               
+  host: "127.0.0.1"
+  port: 8000
+  interval_sec: 2          # chu kỳ announce (StubTracker)
 
 torrent:
-  file_name: "sample_data.bin"  
-  file_size_bytes: 1048576      
-  piece_length: 262144          
-                                
+  file_name: "sample_data.bin"
+  file_size_bytes: 2097152 # 2 MiB
+  piece_length: 131072     # 128 KiB -> 16 chunk
 
 swarm:
-  num_seeds: 1             
-  num_leechers: 3          
-  base_port: 9001          
-  max_up_kbps: 512         
+  num_seeds: 1
+  num_leechers: 3
+  base_port: 9001
+  max_up_kbps: 256         # KiB/s mỗi peer (Hợp đồng 4)
+
+netem:
+  latency_ms: 20
 
 simulation:
-  duration_sec: 20         
-  random_seed: 42          
+  duration_sec: 45
+  random_seed: 42
+  stop_when_complete: true

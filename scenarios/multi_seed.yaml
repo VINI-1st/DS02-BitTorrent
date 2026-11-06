@@ -1,17 +1,27 @@
+# C6 – Kịch bản 2: Multi-seed – cùng cấu hình baseline nhưng 4 seed
 name: "multi_seed"
-description: "Kịch bản C6: Tăng lên 4 Seeders để đánh giá hiệu quả tải song song"
+description: "4 seed, 3 leecher – đo mức tăng tốc nhờ tải song song từ nhiều nguồn"
+
 tracker:
   host: "127.0.0.1"
   port: 8000
+  interval_sec: 2
+
 torrent:
   file_name: "sample_data.bin"
-  file_size_bytes: 1048576
-  piece_length: 262144
+  file_size_bytes: 2097152
+  piece_length: 131072
+
 swarm:
   num_seeds: 4
   num_leechers: 3
   base_port: 9001
-  max_up_kbps: 512
+  max_up_kbps: 256
+
+netem:
+  latency_ms: 20
+
 simulation:
-  duration_sec: 15
+  duration_sec: 45
   random_seed: 42
+  stop_when_complete: true
