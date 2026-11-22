@@ -149,9 +149,9 @@
 \chapter*{LỜI NÓI ĐẦU}
 \addcontentsline{toc}{chapter}{Lời nói đầu}
 
-Trong môn Các hệ thống phân tán, nhóm em được giao đề tài DS02: xây dựng một hệ thống chia sẻ file ngang hàng (P2P) theo kiểu BitTorrent. Đây là đề tài khá ``đúng chất'' phân tán: không có một máy chủ nào giữ toàn bộ dữ liệu, mỗi máy vừa là người tải vừa là người phục vụ, các máy có thể vào ra hoặc sập bất cứ lúc nào, và hệ thống vẫn phải đảm bảo file tải về đúng từng byte.
+Trong môn Các hệ thống phân tán, nhóm em được giao đề tài DS02: xây dựng một hệ thống chia sẻ file ngang hàng (P2P) theo kiểu BitTorrent. Đề tài thể hiện rõ nhiều đặc trưng của hệ phân tán: không có máy chủ trung tâm lưu trữ toàn bộ dữ liệu, mỗi nút vừa là bên tải vừa là bên phục vụ, các nút có thể tham gia, rời mạng hoặc gặp sự cố bất kỳ lúc nào, trong khi hệ thống vẫn phải bảo đảm file tải về chính xác đến từng byte.
 
-Nhóm chọn Python để cài đặt vì viết nhanh, dễ đọc và có sẵn thư viện cho socket, HTTP và đa luồng. Ngoài phần lõi (tracker và peer), nhóm còn làm thêm bộ mô phỏng để bật hàng chục tiến trình peer, gây churn (peer vào/ra/sập), làm sập tracker, rồi đo đạc và vẽ biểu đồ. Nhờ vậy nhóm không chỉ ``chạy được'' mà còn đánh giá được hệ thống trong nhiều tình huống khác nhau.
+Nhóm lựa chọn ngôn ngữ Python để cài đặt do cú pháp ngắn gọn, dễ đọc và có sẵn các thư viện chuẩn hỗ trợ lập trình socket, HTTP và đa luồng. Bên cạnh phần lõi (tracker và peer), nhóm xây dựng thêm một bộ mô phỏng cho phép khởi chạy hàng chục tiến trình peer, tạo churn (peer tham gia, rời mạng hoặc gặp sự cố), chủ động làm tracker ngừng hoạt động, sau đó thu thập số liệu và vẽ biểu đồ. Nhờ đó, nhóm không chỉ kiểm chứng được tính đúng đắn mà còn đánh giá được hành vi của hệ thống trong nhiều tình huống khác nhau.
 
 Báo cáo gồm 6 chương: giới thiệu đề tài, cơ sở lý thuyết, thiết kế hệ thống, cài đặt từng module, kiểm thử và thực nghiệm, cuối cùng là kết luận. Do thời gian và kiến thức còn hạn chế nên báo cáo khó tránh khỏi thiếu sót, nhóm em rất mong nhận được góp ý của thầy để hoàn thiện hơn.
 
@@ -181,7 +181,7 @@ YAML & YAML Ain't Markup Language -- định dạng file cấu hình\\
 E2E & End-to-End -- kiểm thử toàn hệ thống\\
 seed & Peer đã có đủ file, chỉ phục vụ\\
 leecher & Peer đang tải, còn thiếu chunk\\
-churn & Hiện tượng peer liên tục tham gia / rời / sập khỏi mạng\\
+churn & Hiện tượng peer liên tục tham gia, rời mạng hoặc gặp sự cố\\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -194,7 +194,7 @@ churn & Hiện tượng peer liên tục tham gia / rời / sập khỏi mạng\
 
 \section{Đặt vấn đề}
 
-Với mô hình client--server truyền thống, khi nhiều người cùng tải một file lớn thì máy chủ phải gánh toàn bộ băng thông: càng đông người tải thì mỗi người càng chậm, và nếu máy chủ sập thì không ai tải được nữa. Mô hình ngang hàng (P2P) giải quyết vấn đề này bằng cách để chính những người đang tải chia sẻ lại phần dữ liệu họ đã có. Số người tải càng nhiều thì tổng băng thông phục vụ càng lớn.
+Với mô hình client--server truyền thống, khi nhiều người cùng tải một file lớn thì máy chủ phải đảm nhận toàn bộ băng thông: số người tải càng lớn thì tốc độ của mỗi người càng giảm, và nếu máy chủ gặp sự cố thì toàn bộ người dùng không thể tải được. Mô hình ngang hàng (P2P) giải quyết vấn đề này bằng cách để chính những người đang tải chia sẻ lại phần dữ liệu họ đã có. Số người tải càng nhiều thì tổng băng thông phục vụ càng lớn.
 
 BitTorrent là giao thức P2P phổ biến nhất theo hướng này. File được chia thành nhiều \textit{chunk} (piece) nhỏ, mỗi chunk có mã băm riêng; một \textit{tracker} giúp các peer tìm thấy nhau; sau đó các peer trao đổi chunk trực tiếp với nhau và tự kiểm tra tính đúng của từng chunk.
 
@@ -205,18 +205,18 @@ BitTorrent là giao thức P2P phổ biến nhất theo hướng này. File đư
   \item Chia file thành các chunk, mỗi chunk có mã băm SHA-1, mô tả trong một file metainfo.
   \item Xây dựng \textbf{tracker} cho phép peer đăng ký và lấy danh sách peer khác trong cùng swarm.
   \item Xây dựng \textbf{peer} vừa tải vừa phục vụ chunk, tải song song từ nhiều nguồn, chọn chunk hiếm trước (rarest-first).
-  \item Chịu lỗi: peer nguồn chết giữa chừng thì chuyển sang nguồn khác; chunk sai hash bị loại; tracker sập rồi bật lại thì swarm tự hồi phục.
-  \item Mô phỏng \textbf{churn} (peer vào/ra/sập theo phân phối xác suất), đo đạc và đánh giá hiệu năng.
+  \item Chịu lỗi: khi peer nguồn ngừng hoạt động giữa chừng thì chuyển sang nguồn khác; chunk sai hash bị loại bỏ; khi tracker gặp sự cố rồi khởi động lại thì swarm tự phục hồi.
+  \item Mô phỏng \textbf{churn} (peer tham gia, rời mạng hoặc gặp sự cố theo phân phối xác suất), đo đạc và đánh giá hiệu năng.
   \item Có bộ kiểm thử tự động và một bản demo chạy bằng một lệnh.
 \end{itemize}
 
 \section{Phạm vi}
 
-Hệ thống chạy trên một máy (địa chỉ \texttt{127.0.0.1}), mỗi tracker/peer là một \textbf{tiến trình hệ điều hành riêng}, giao tiếp qua TCP và HTTP thật. Nhóm không làm các phần nâng cao của BitTorrent như DHT, magnet link, mã hóa kết nối hay NAT traversal. Định dạng metainfo dùng JSON thay cho bencode để dễ đọc và debug.
+Hệ thống chạy trên một máy (địa chỉ \texttt{127.0.0.1}), mỗi tracker/peer là một \textbf{tiến trình hệ điều hành riêng}, giao tiếp qua TCP và HTTP thật. Nhóm không làm các phần nâng cao của BitTorrent như DHT, magnet link, mã hóa kết nối hay NAT traversal. Định dạng metainfo dùng JSON thay cho bencode để thuận tiện cho việc đọc và gỡ lỗi.
 
 \section{Phân công công việc}
 
-Nhóm chia hệ thống thành ba module, mỗi người sở hữu một module và chỉ ``gặp nhau'' ở các hợp đồng giao tiếp đã chốt từ đầu. Mỗi người cũng tự viết bản giả (mock) của phần còn lại để không phải chờ nhau.
+Nhóm chia hệ thống thành ba module, mỗi thành viên phụ trách một module; các module chỉ phụ thuộc nhau thông qua những hợp đồng giao tiếp đã được thống nhất từ đầu. Mỗi thành viên cũng tự xây dựng bản giả lập (mock) của các module còn lại để có thể phát triển song song mà không phụ thuộc vào tiến độ của nhau.
 
 \begin{table}[H]
 \centering
@@ -242,8 +242,8 @@ Phần việc chung (báo cáo, slide, README, review chéo) được chia đề
 Trong mạng P2P, các nút (peer) có vai trò ngang nhau: mỗi nút vừa là client vừa là server. Một số đặc điểm quan trọng:
 \begin{itemize}
   \item \textbf{Khả năng mở rộng:} tài nguyên phục vụ tăng theo số nút tham gia.
-  \item \textbf{Không có điểm lỗi duy nhất} về dữ liệu: một nút sập thì dữ liệu vẫn còn ở nút khác (nếu đã được nhân bản).
-  \item \textbf{Thách thức:} các nút không tin cậy, vào ra liên tục (churn), dữ liệu có thể bị sửa, mạng không đồng nhất.
+  \item \textbf{Không có điểm lỗi duy nhất} về dữ liệu: khi một nút gặp sự cố, dữ liệu vẫn còn ở các nút khác (nếu đã được nhân bản).
+  \item \textbf{Thách thức:} các nút không tin cậy, liên tục tham gia và rời mạng (churn), dữ liệu có thể bị sửa, mạng không đồng nhất.
 \end{itemize}
 
 Mạng P2P chia làm hai loại chính: \textit{có cấu trúc} (DHT như Chord, Kademlia) và \textit{không cấu trúc}. BitTorrent cổ điển là dạng lai: dùng một tracker tập trung để \textbf{tìm peer}, còn việc \textbf{truyền dữ liệu} hoàn toàn ngang hàng.
@@ -262,7 +262,7 @@ Mạng P2P chia làm hai loại chính: \textit{có cấu trúc} (DHT như Chord
 File được chia thành các chunk có kích thước cố định (chunk cuối có thể ngắn hơn). Khi nhận đủ một chunk, peer tính SHA-1 và so với hash trong metainfo; nếu sai thì loại bỏ và tải lại từ nguồn khác. Nhờ vậy peer không cần tin vào bất kỳ nguồn nào -- chỉ cần tin vào file metainfo.
 
 \subsection{Chiến lược chọn chunk: rarest-first và endgame}
-Nếu mọi peer đều tải chunk theo thứ tự 0, 1, 2,\dots thì các chunk cuối sẽ rất hiếm, và khi seed rời đi thì swarm có thể mất hẳn những chunk đó. \textbf{Rarest-first} chọn chunk mà ít peer có nhất trước, giúp các bản sao được phân tán đều và tăng độ sẵn sàng của dữ liệu. Khi gần xong, peer vào chế độ \textbf{endgame}: gửi yêu cầu cùng một chunk tới nhiều peer để một nguồn chậm không làm ``treo'' phần đuôi.
+Nếu mọi peer đều tải chunk theo thứ tự 0, 1, 2,\dots thì các chunk cuối sẽ rất hiếm, và khi seed rời đi thì swarm có thể mất hoàn toàn những chunk đó. \textbf{Rarest-first} chọn chunk mà ít peer có nhất trước, giúp các bản sao được phân tán đều và tăng độ sẵn sàng của dữ liệu. Khi gần xong, peer vào chế độ \textbf{endgame}: gửi yêu cầu cùng một chunk tới nhiều peer để tránh việc một nguồn chậm kéo dài thời gian hoàn tất các chunk cuối cùng.
 
 \subsection{Choke / unchoke}
 Mỗi peer chỉ phục vụ đồng thời một số lượng giới hạn peer khác (các peer được \textit{unchoke}); số còn lại bị \textit{choke}. Cơ chế này giúp chia băng thông upload hợp lý và tránh quá tải.
@@ -272,9 +272,9 @@ Mỗi peer chỉ phục vụ đồng thời một số lượng giới hạn pee
 \textbf{Churn} là hiện tượng peer liên tục tham gia và rời mạng. Để mô phỏng thực tế, nhóm dùng các mô hình phổ biến trong nghiên cứu P2P:
 \begin{itemize}
   \item \textbf{Thời điểm đến theo quá trình Poisson} với tốc độ $\lambda$: khoảng cách giữa hai lần đến tuân theo phân phối mũ $T \sim \text{Exp}(\lambda)$, trung bình $1/\lambda$ giây.
-  \item \textbf{Thời gian sống theo phân phối mũ hoặc Pareto.} Pareto có ``đuôi nặng'': nhiều peer sống rất ngắn, một số ít sống rất lâu -- giống hành vi người dùng thật. Với tham số $\alpha > 1$ và trung bình $\mu$, ta chọn $x_m = \mu(\alpha-1)/\alpha$.
-  \item \textbf{Rời đàng hoàng} (gửi \texttt{stopped} cho tracker) và \textbf{sập} (bị kill, không kịp báo ai) -- hai trường hợp này cần được hệ thống phát hiện theo cách khác nhau.
-  \item \textbf{Flash crowd}: rất nhiều peer ập vào trong thời gian ngắn, thường gặp khi một file vừa được phát hành.
+  \item \textbf{Thời gian sống theo phân phối mũ hoặc Pareto.} Phân phối Pareto có tính chất đuôi nặng (heavy-tailed): phần lớn peer có thời gian sống ngắn, trong khi một số ít tồn tại rất lâu, phù hợp với hành vi của người dùng thực tế. Với tham số $\alpha > 1$ và trung bình $\mu$, ta chọn $x_m = \mu(\alpha-1)/\alpha$.
+  \item \textbf{Rời mạng chủ động} (gửi \texttt{stopped} cho tracker) và \textbf{gặp sự cố} (tiến trình bị kết thúc đột ngột, không kịp gửi thông báo) -- hai trường hợp này cần được hệ thống phát hiện theo những cách khác nhau.
+  \item \textbf{Flash crowd}: một lượng lớn peer cùng tham gia trong thời gian ngắn, thường xảy ra khi một file vừa được phát hành.
 \end{itemize}
 
 \section{Các khái niệm hệ phân tán liên quan}
@@ -319,20 +319,20 @@ Hệ thống gồm ba thành phần chạy như các tiến trình độc lập:
   \draw[arr] (P3.north) -- node[lbl,pos=0.45]{announce} (T.south east);
   \draw[arr,<->,blue!70!black] (P1) -- node[lbl,above=2pt,fill=none]{TCP} (P2);
   \draw[arr,<->,blue!70!black] (P2) -- node[lbl,above=2pt,fill=none]{TCP} (P3);
-  \draw[arr,green!40!black] ($(S.north)+(-4,0)$) -- node[lbl]{bật / kill} (P1.south);
-  \draw[arr,green!40!black] (S.north) -- node[lbl]{bật / kill} (P2.south);
-  \draw[arr,green!40!black] ($(S.north)+(4,0)$) -- node[lbl]{bật / kill} (P3.south);
-  \draw[arr,dashed,green!40!black] (S.east) -- ++(2.6,0) |- node[lbl,pos=0.25,align=center]{kill /\\bật lại} (T.east);
+  \draw[arr,green!40!black] ($(S.north)+(-4,0)$) -- node[lbl]{khởi động / dừng} (P1.south);
+  \draw[arr,green!40!black] (S.north) -- node[lbl]{khởi động / dừng} (P2.south);
+  \draw[arr,green!40!black] ($(S.north)+(4,0)$) -- node[lbl]{khởi động / dừng} (P3.south);
+  \draw[arr,dashed,green!40!black] (S.east) -- ++(2.6,0) |- node[lbl,pos=0.25,align=center]{dừng /\\khởi động lại} (T.east);
 \end{tikzpicture}
 \caption{Kiến trúc tổng thể của hệ thống (mỗi cặp peer đều có thể nối TCP trực tiếp)}
 \label{fig:arch}
 \end{figure}
 
-Ý tưởng chính: \textbf{tracker chỉ dùng để tìm peer}, không đi qua dữ liệu. Dữ liệu đi trực tiếp giữa các peer qua TCP. Simulator đứng bên ngoài: bật/tắt tiến trình, đọc log JSON từ stdout của chúng để đo đạc. Vì thế khi tracker sập, các peer đã biết nhau vẫn tiếp tục trao đổi bình thường.
+Nguyên tắc thiết kế cốt lõi là \textbf{tracker chỉ đảm nhiệm việc tìm kiếm peer}, dữ liệu không đi qua tracker mà được truyền trực tiếp giữa các peer qua TCP. Simulator hoạt động độc lập bên ngoài: khởi chạy, dừng các tiến trình và đọc log JSON từ stdout của chúng để đo đạc. Do đó, khi tracker ngừng hoạt động, các peer đã kết nối với nhau vẫn tiếp tục trao đổi dữ liệu bình thường.
 
 \section{Năm hợp đồng giao tiếp}
 
-Để ba người làm song song mà không chờ nhau, nhóm chốt trước 5 hợp đồng giao tiếp và ghi lại trong thư mục \texttt{docs/}. Mọi thay đổi hợp đồng cần cả ba đồng ý.
+Để ba thành viên có thể phát triển song song, nhóm thống nhất trước 5 hợp đồng giao tiếp và lưu lại trong thư mục \texttt{docs/}. Mọi thay đổi đối với hợp đồng đều cần sự đồng thuận của cả ba thành viên.
 
 \begin{table}[H]
 \centering
@@ -425,7 +425,7 @@ Các sự kiện chính:
   \item truyền chunk: \texttt{piece\_done}, \texttt{piece\_uploaded}, \texttt{invalid\_chunk};
   \item lỗi và phục hồi: \texttt{peer\_lost}, \texttt{switch\_source}.
 \end{itemize}
-Peer bị kill sẽ không ghi được \texttt{stopped} -- đây chính là cách phân biệt ``rời đàng hoàng'' với ``sập''.
+Peer bị kết thúc đột ngột sẽ không ghi được sự kiện \texttt{stopped}; đây là cơ sở để phân biệt trường hợp rời mạng chủ động với trường hợp gặp sự cố.
 
 Kịch bản thí nghiệm được mô tả bằng file YAML, ví dụ kịch bản \textit{high churn}:
 \begin{lstlisting}[language=yaml]
@@ -507,9 +507,9 @@ Xử lý \texttt{announce}:
   \item Trả về tối đa 50 peer chọn ngẫu nhiên (\texttt{random.sample}), bỏ chính người gọi.
 \end{itemize}
 
-\textbf{Phát hiện peer chết (A2):} một luồng nền chạy mỗi \texttt{interval} giây, xóa các peer có \texttt{now - last\_announce > TTL}. Peer bị kill không gửi được \texttt{stopped} nhưng vẫn biến mất khỏi danh sách sau đúng TTL.
+\textbf{Phát hiện peer ngừng hoạt động (A2):} một luồng nền chạy mỗi \texttt{interval} giây, xóa các peer có \texttt{now - last\_announce > TTL}. Peer bị buộc dừng không gửi được \texttt{stopped} nhưng vẫn biến mất khỏi danh sách sau đúng TTL.
 
-\textbf{Phục hồi sau khi khởi động lại (A3):} tracker \textbf{không lưu trạng thái ra đĩa}. Khi bị kill rồi bật lại, swarm rỗng; nhưng vì mọi peer announce định kỳ, swarm sẽ tự dựng lại sau tối đa một chu kỳ \texttt{interval}. Cách làm này đơn giản mà vẫn đúng, vì thông tin của tracker chỉ là ``gợi ý'' để tìm peer, không phải dữ liệu quan trọng.
+\textbf{Phục hồi sau khi khởi động lại (A3):} tracker \textbf{không lưu trạng thái ra đĩa}. Khi tracker bị buộc dừng rồi khởi động lại, swarm ban đầu rỗng; nhưng vì mọi peer announce định kỳ, swarm sẽ tự dựng lại sau tối đa một chu kỳ \texttt{interval}. Cách tiếp cận này đơn giản nhưng vẫn bảo đảm tính đúng đắn, vì thông tin trên tracker chỉ là trạng thái mềm (soft state) phục vụ việc tìm kiếm peer, không phải dữ liệu cần lưu trữ bền vững.
 
 \subsection{Wire protocol (A4)}
 Module \texttt{protocol} định nghĩa mỗi loại thông điệp là một \texttt{dataclass} (\texttt{Handshake}, \texttt{Bitfield}, \texttt{Request}, \texttt{Piece},\dots) cùng hàm \texttt{encode}/\texttt{decode}. Đóng gói dùng \texttt{struct.pack({\char34}>IB{\char34}, length, msg\_id)}. Bộ giải mã kiểm tra độ dài, ID hợp lệ và kích thước payload; dữ liệu hỏng sẽ ném lỗi thay vì làm treo kết nối. Unit test kiểm tra round-trip cho mọi loại thông điệp.
@@ -528,14 +528,14 @@ class TransportListener(ABC):
     async def on_disconnected(conn, reason) -> None
     async def on_message(conn, message) -> None
 \end{lstlisting}
-\texttt{TcpTransport} cài đặt bằng \texttt{asyncio}: có timeout khi kết nối, keepalive định kỳ, giới hạn số kết nối, và gọi \texttt{on\_disconnected} khi đầu bên kia đóng hoặc mất kết nối. Nhờ interface này, trong lúc A chưa xong, B vẫn có thể thử nghiệm bằng \texttt{FakeTransport} chạy trong bộ nhớ.
+\texttt{TcpTransport} cài đặt bằng \texttt{asyncio}: có timeout khi kết nối, keepalive định kỳ, giới hạn số kết nối, và gọi \texttt{on\_disconnected} khi đầu bên kia đóng hoặc mất kết nối. Nhờ interface này, khi module A chưa hoàn thiện, module B vẫn có thể được kiểm thử bằng \texttt{FakeTransport} chạy trong bộ nhớ.
 
 \subsection{Client tracker có backoff (A6)}
 \texttt{TrackerClient} announce định kỳ theo \texttt{interval} tracker trả về. Khi tracker không phản hồi, client thử lại với \textbf{exponential backoff có jitter}:
 \[
   t_{\text{chờ}} = \min\!\left(t_0 \cdot 2^{k},\ t_{\max}\right) + U\!\left(0,\ 0.25\cdot t_{\text{chờ}}\right)
 \]
-với $t_0 = 2$s, $t_{\max} = 60$s, $k$ là số lần thất bại liên tiếp. Jitter giúp các peer không cùng ``đổ'' vào tracker một lúc ngay khi nó sống lại.
+với $t_0 = 2$s, $t_{\max} = 60$s, $k$ là số lần thất bại liên tiếp. Jitter giúp phân tán thời điểm thử lại, tránh việc nhiều peer đồng loạt gửi yêu cầu tới tracker ngay khi tracker hoạt động trở lại.
 
 \section{Module B -- Peer core}
 
@@ -573,7 +573,7 @@ def pick(self, peer, count=1):
     return chosen
 \end{lstlisting}
 
-Xáo trộn trước khi sắp xếp (sắp xếp của Python là ổn định) giúp các chunk có cùng độ hiếm được chọn ngẫu nhiên, tránh trường hợp mọi leecher cùng đuổi theo một chunk. Endgame bật khi mọi chunk còn thiếu đều đang được tải; khi một chunk xong, \texttt{piece\_done} trả về danh sách peer có yêu cầu trùng để gửi \texttt{cancel}.
+Xáo trộn trước khi sắp xếp (sắp xếp của Python là ổn định) giúp các chunk có cùng độ hiếm được chọn ngẫu nhiên, tránh việc mọi leecher cùng yêu cầu một chunk. Chế độ endgame được kích hoạt khi mọi chunk còn thiếu đều đang được tải; khi một chunk hoàn tất, \texttt{piece\_done} trả về danh sách peer có yêu cầu trùng để gửi \texttt{cancel}.
 
 \subsection{Tải song song (B4)}
 \texttt{Downloader} quản lý danh sách \texttt{RemotePeer} (bitfield, trạng thái bị cấm, thời điểm được thử lại\dots). Peer chạy một nhóm worker, mỗi worker lấy một cặp (chunk, nguồn) từ picker và tải. Mặc định tối đa \textbf{4 chunk tải đồng thời} và \textbf{không quá 2 yêu cầu cho mỗi nguồn}, nên khi có nhiều seed thì tải được trải ra nhiều nguồn cùng lúc. Mỗi chunk được chia thành các block 16 KiB gửi bằng \texttt{request}.
@@ -593,29 +593,29 @@ class TokenBucket:
             time.sleep(wait)
 \end{lstlisting}
 
-Điểm quan trọng: \textbf{leecher phục vụ chunk ngay khi vừa có}, không cần chờ tải xong toàn bộ file. Mỗi chunk mới được thông báo cho mọi kết nối bằng \texttt{have}.
+Một đặc điểm quan trọng là \textbf{leecher phục vụ chunk ngay sau khi nhận được}, không cần chờ tải xong toàn bộ file. Mỗi chunk mới được thông báo cho mọi kết nối bằng \texttt{have}.
 
 \subsection{Chịu lỗi phía peer (B6)}
 \begin{itemize}
-  \item \textbf{Mất nguồn giữa chừng:} khi kết nối đứt hoặc timeout, peer log \texttt{peer\_lost}, trả chunk đang tải về picker (\texttt{peer\_gone}) và tải lại từ nguồn khác (log \texttt{switch\_source}). Nguồn lỗi bị tạm ``nghỉ'' \texttt{PEER\_RETRY\_SEC = 2} giây trước khi thử kết nối lại.
-  \item \textbf{Chunk sai hash:} chunk bị loại, log \texttt{invalid\_chunk}, nguồn đó bị đánh dấu ``xấu'' với chunk này; gửi sai \textbf{từ 2 lần trở lên} thì nguồn bị cấm hẳn và đóng kết nối.
+  \item \textbf{Mất nguồn giữa chừng:} khi kết nối đứt hoặc timeout, peer log \texttt{peer\_lost}, trả chunk đang tải về picker (\texttt{peer\_gone}) và tải lại từ nguồn khác (log \texttt{switch\_source}). Nguồn lỗi bị tạm loại trong \texttt{PEER\_RETRY\_SEC = 2} giây trước khi được thử kết nối lại.
+  \item \textbf{Chunk sai hash:} chunk bị loại, log \texttt{invalid\_chunk}, nguồn đó bị đánh dấu là không tin cậy đối với chunk này; gửi sai \textbf{từ 2 lần trở lên} thì nguồn bị cấm vĩnh viễn và kết nối bị đóng.
   \item \textbf{Thiếu nguồn:} khi không còn peer nào có chunk cần, peer announce lại sớm (mỗi 2 giây thay vì chờ \texttt{interval}) để xin thêm peer. Nếu 90 giây liền không có nguồn dùng được thì thoát với mã 3.
-  \item \textbf{Tracker sập:} vòng announce dùng backoff, bắt đầu 0.5 giây và nhân đôi tới tối đa \texttt{interval}; trong lúc đó việc trao đổi chunk với các peer đã biết vẫn tiếp tục.
+  \item \textbf{Tracker ngừng hoạt động:} vòng announce dùng backoff, bắt đầu 0.5 giây và nhân đôi tới tối đa \texttt{interval}; trong lúc đó việc trao đổi chunk với các peer đã biết vẫn tiếp tục.
 \end{itemize}
 
 \subsection{Tiến trình peer hoàn chỉnh (B7)}
-\texttt{peer.py} ghép tất cả lại: đọc tham số CLI (Hợp đồng 4), ghi log JSON Lines (Hợp đồng 5), cài signal handler để rời đàng hoàng. Peer chạy nhiều luồng: luồng server, luồng announce, luồng quản lý session, các worker tải và luồng broadcast \texttt{have}.
+\texttt{peer.py} ghép tất cả lại: đọc tham số CLI (Hợp đồng 4), ghi log JSON Lines (Hợp đồng 5), cài signal handler để rời mạng chủ động khi nhận tín hiệu dừng. Peer chạy nhiều luồng: luồng server, luồng announce, luồng quản lý session, các worker tải và luồng broadcast \texttt{have}.
 
 \section{Module C -- Mô phỏng và đánh giá}
 
 \subsection{Bộ khởi chạy kịch bản (C1)}
-\texttt{launcher.py} đọc file YAML, sinh file dữ liệu tất định và metainfo, bật tracker, bật các seed/leecher dưới dạng tiến trình con, gom stdout của chúng vào \texttt{logs/<kịch bản>/events.jsonl}. Khi kết thúc, launcher dừng đàng hoàng mọi tiến trình (trên Windows dùng \texttt{CTRL\_BREAK\_EVENT} kèm file \texttt{.sim\_stop}); tiến trình không thoát sau 4 giây sẽ bị kill để không còn tiến trình mồ côi.
+\texttt{launcher.py} đọc file YAML, sinh file dữ liệu tất định và metainfo, khởi động tracker và các seed/leecher dưới dạng tiến trình con, gom stdout của chúng vào \texttt{logs/<kịch bản>/events.jsonl}. Khi kết thúc, launcher dừng có kiểm soát mọi tiến trình (trên Windows dùng \texttt{CTRL\_BREAK\_EVENT} kèm file \texttt{.sim\_stop}); tiến trình không thoát sau 4 giây sẽ bị buộc dừng để không còn tiến trình mồ côi (orphan process).
 
 \subsection{Engine churn (C2)}
-\texttt{ChurnGenerator} sinh lịch các sự kiện \texttt{join}, \texttt{leave\_graceful}, \texttt{crash}. Mọi số ngẫu nhiên lấy từ \texttt{random.Random(seed)}, và mỗi loại (thời điểm đến, thời gian sống, kiểu rời) dùng một luồng số ngẫu nhiên riêng -- nên đổi \texttt{crash\_prob} không làm lệch thời điểm đến. Cùng \texttt{random\_seed} luôn cho ra cùng lịch churn; lịch được ``ký'' bằng SHA-256 (\texttt{churn\_fingerprint}) để kiểm tra hai lần chạy có giống nhau không.
+\texttt{ChurnGenerator} sinh lịch các sự kiện \texttt{join}, \texttt{leave\_graceful}, \texttt{crash}. Mọi số ngẫu nhiên lấy từ \texttt{random.Random(seed)}, và mỗi loại (thời điểm đến, thời gian sống, kiểu rời) dùng một luồng số ngẫu nhiên riêng -- nên đổi \texttt{crash\_prob} không làm lệch thời điểm đến. Cùng \texttt{random\_seed} luôn cho ra cùng lịch churn; lịch được băm bằng SHA-256 (\texttt{churn\_fingerprint}) để kiểm tra hai lần chạy có giống nhau không.
 
 \subsection{Giả lập mạng (C3)}
-\texttt{netem.py} giới hạn băng thông upload của từng peer (qua \texttt{--max-up-kbps}), thêm độ trễ, kill/bật lại tracker theo lịch, kill peer giữa chừng và cho một peer cố tình gửi chunk hỏng để thử cơ chế kiểm hash.
+\texttt{netem.py} giới hạn băng thông upload của từng peer (qua \texttt{--max-up-kbps}), thêm độ trễ, dừng và khởi động lại tracker theo lịch, buộc dừng peer giữa chừng và cho một peer cố tình gửi chunk hỏng để thử cơ chế kiểm hash.
 
 \subsection{Thu số liệu, kiểm thử và demo (C4, C5, C7)}
 \begin{itemize}
@@ -624,7 +624,7 @@ class TokenBucket:
   \item \textbf{C7 -- demo:} \texttt{demo/run\_demo.py} hiển thị dashboard trên terminal: số peer, vai trò, bitfield dạng \texttt{[\#\#\#\#....] 4/16}, số chunk đã upload, sự kiện gần nhất và danh sách 7 tình huống bắt buộc -- mỗi mục chỉ được đánh dấu khi sự kiện thật xảy ra.
 \end{itemize}
 
-Ngoài ra, nhóm C viết \texttt{StubPeer} và \texttt{StubTracker} -- bản tối giản nhưng chạy thật (TCP, SHA-1, rarest-first) -- để làm mô phỏng ngay từ đầu khi peer và tracker thật chưa xong. Khi module thật hoàn thành, chỉ cần đổi tham số \texttt{--peer-script {\char34}-m peer{\char34}} và \texttt{--tracker-script {\char34}-m src.tracker{\char34}}, không cần sửa mã của C.
+Ngoài ra, thành viên C xây dựng \texttt{StubPeer} và \texttt{StubTracker} -- phiên bản tối giản nhưng hoạt động thực sự (TCP, SHA-1, rarest-first) -- để có thể tiến hành mô phỏng ngay từ đầu, khi peer và tracker thật chưa hoàn thiện. Khi module thật hoàn thành, chỉ cần đổi tham số \texttt{--peer-script {\char34}-m peer{\char34}} và \texttt{--tracker-script {\char34}-m src.tracker{\char34}}, không cần sửa mã của C.
 
 % ================================================================= CHƯƠNG 5
 \chapter{Kiểm thử và thực nghiệm}
@@ -648,7 +648,7 @@ Ngoài ra, nhóm C viết \texttt{StubPeer} và \texttt{StubTracker} -- bản t�
 Unit test & Round-trip mọi thông điệp wire; metainfo tạo/đọc/kiểm tra; storage từ chối chunk sai hash; picker chọn đúng chunk hiếm; tracker TTL, \texttt{stopped}; client tracker backoff; churn tất định theo seed\\
 Functional & Đúng hợp đồng CLI và mã thoát; file tải về khớp SHA-256 và từng chunk khớp SHA-1\\
 Concurrency & High churn, flash crowd -- nhiều peer cùng tải, cùng announce\\
-Fault \& Recovery & Kill nguồn giữa chừng $\rightarrow$ \texttt{peer\_lost} $\rightarrow$ \texttt{switch\_source}; rời đàng hoàng vs sập; tracker sập rồi bật lại\\
+Fault \& Recovery & Buộc dừng nguồn giữa chừng $\rightarrow$ \texttt{peer\_lost} $\rightarrow$ \texttt{switch\_source}; rời mạng chủ động và gặp sự cố; tracker ngừng hoạt động rồi khởi động lại\\
 Security & Peer gửi chunk hỏng bị phát hiện, chunk bị từ chối, peer bị cấm\\
 Performance & Giới hạn băng thông đúng mức cấu hình; multi-seed nhanh hơn baseline\\
 \bottomrule
@@ -667,9 +667,9 @@ Chạy toàn bộ bằng một lệnh \texttt{py tests/e2e/run\_all.py} (15 hạ
 \textbf{Kịch bản} & \textbf{Mô tả}\\\midrule
 Baseline & 1 seed, 3 leecher, mạng ổn định\\
 Multi-seed & 4 seed, 3 leecher -- kiểm tra hiệu quả tải song song\\
-High churn & 1 seed + 2 leecher tĩnh; leecher động đến theo Poisson ($\lambda = 0.7$/s), sống theo Pareto (TB 8 s, $\alpha=1.8$), 50\% rời bằng cách sập\\
-Flash crowd & 8 leecher ập vào trong 0.5 s, sau đó rời đồng loạt\\
-Tracker crash & Tracker bị kill ở giây 3, bật lại ở giây 8; 2 leecher đến đúng lúc tracker đang sập\\
+High churn & 1 seed + 2 leecher tĩnh; leecher động đến theo Poisson ($\lambda = 0.7$/s), sống theo Pareto (TB 8 s, $\alpha=1.8$), 50\% rời mạng do gặp sự cố\\
+Flash crowd & 8 leecher cùng tham gia trong 0.5 s, sau đó đồng loạt rời mạng\\
+Tracker crash & Tracker bị buộc dừng ở giây thứ 3, khởi động lại ở giây thứ 8; 2 leecher tham gia trong thời gian tracker ngừng hoạt động\\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -709,16 +709,16 @@ Tracker crash & 2 & 5  & 100\% & 17.3 & 15.4--18.4 & 4.03 & 51\%\\
 \end{figure}
 
 \subsection{Baseline}
-Cả 3 leecher đều tải xong, trung bình 13.1 s. Điều đáng chú ý là \textbf{44\%} dữ liệu được phục vụ bởi chính các leecher chứ không phải seed. Dù seed chỉ có 256 KiB/s, các leecher trao đổi chunk cho nhau ngay khi có nên thông lượng đỉnh của cả swarm lên tới 1280 KiB/s -- đây đúng là ưu điểm của P2P.
+Cả 3 leecher đều tải xong, trung bình 13.1 s. Đáng chú ý, \textbf{44\%} dữ liệu được phục vụ bởi chính các leecher chứ không phải seed. Dù seed chỉ có 256 KiB/s, các leecher trao đổi chunk cho nhau ngay khi có nên thông lượng đỉnh của cả swarm lên tới 1280 KiB/s. Kết quả này thể hiện rõ ưu điểm của mô hình P2P.
 
 \subsection{Multi-seed}
 Với 4 seed, thời gian tải giảm còn 6.2 s, \textbf{nhanh hơn 2.12 lần} so với baseline. Tốc độ không tăng đủ 4 lần vì ở baseline các leecher đã bù một phần băng thông, và mỗi chunk vẫn có một độ trễ cố định không giảm theo số seed. Tỉ lệ leecher upload giảm còn 8\% vì seed đã đủ nhanh.
 
 \subsection{High churn}
-Có 12 leecher tham gia, trong đó nhiều peer bị kill đột ngột. Hệ thống ghi nhận \textbf{20 lần} \texttt{peer\_lost} và \textbf{8 lần} \texttt{switch\_source}: peer phát hiện nguồn chết và tự chuyển sang nguồn khác, các leecher tĩnh vẫn tải xong đúng hash. Tỉ lệ hoàn tất chỉ đạt 50\% vì phân phối Pareto có nhiều peer sống rất ngắn, rời mạng trước khi kịp tải đủ -- đây là hành vi mong đợi, không phải lỗi. Do seed gốc luôn online nên mọi chunk luôn có ít nhất 1 bản sao.
+Có 12 leecher tham gia, trong đó nhiều peer bị kết thúc đột ngột. Hệ thống ghi nhận \textbf{20 lần} \texttt{peer\_lost} và \textbf{8 lần} \texttt{switch\_source}: peer phát hiện nguồn ngừng hoạt động và tự chuyển sang nguồn khác, các leecher tĩnh vẫn tải xong đúng hash. Tỉ lệ hoàn tất chỉ đạt 50\% vì theo phân phối Pareto, nhiều peer có thời gian sống rất ngắn, rời mạng trước khi kịp tải đủ; đây là hành vi phù hợp với mô hình churn, không phải lỗi của hệ thống. Do seed gốc luôn hoạt động nên mọi chunk luôn có ít nhất 1 bản sao.
 
 \subsection{Flash crowd}
-8 leecher ập vào cùng lúc nhưng vẫn hoàn tất 100\%, trung bình 12.3 s. Leecher phục vụ tới \textbf{82\%} dữ liệu: một seed không đủ băng thông cho cả đám đông, nhưng rarest-first giúp các leecher giữ những chunk khác nhau nên có thể trao đổi cho nhau. Tracker chịu tải đỉnh 13 announce/giây.
+Dù 8 leecher tham gia gần như đồng thời, tỉ lệ hoàn tất vẫn đạt 100\% với thời gian tải trung bình 12.3 s. Leecher phục vụ tới \textbf{82\%} dữ liệu: một seed không đủ băng thông để phục vụ toàn bộ leecher, nhưng rarest-first giúp các leecher giữ những chunk khác nhau nên có thể trao đổi cho nhau. Tracker chịu tải đỉnh 13 announce/giây.
 
 \begin{figure}[H]
 \centering
@@ -727,15 +727,15 @@ Có 12 leecher tham gia, trong đó nhiều peer bị kill đột ngột. Hệ t
 \label{fig:replication}
 \end{figure}
 
-Hình~\ref{fig:replication} cho thấy số bản sao của chunk tăng nhanh sau đợt ập vào và sụt mạnh khi các peer rời đồng loạt. Seed gốc là điều kiện để không chunk nào biến mất hoàn toàn.
+Hình~\ref{fig:replication} cho thấy số bản sao của chunk tăng nhanh sau đợt tham gia đồng loạt và giảm mạnh khi các peer rời đồng loạt. Seed gốc là điều kiện để không chunk nào biến mất hoàn toàn.
 
 \subsection{Tracker crash}
-Tracker ngừng hoạt động khoảng 5.1 s, trong thời gian đó có 27 lần announce thất bại. Tuy vậy, tỉ lệ hoàn tất vẫn là \textbf{100\%}: các peer đã biết nhau vẫn trao đổi chunk trực tiếp. Hai leecher đến lúc tracker đang sập không tìm được nguồn cho tới khi tracker sống lại (nhờ announce thử lại với backoff). Sau khi tracker khởi động lại, swarm được đăng ký lại đầy đủ sau khoảng 1.5 s mà tracker không cần lưu bất kỳ trạng thái nào.
+Tracker ngừng hoạt động khoảng 5.1 s, trong thời gian đó có 27 lần announce thất bại. Tuy vậy, tỉ lệ hoàn tất vẫn là \textbf{100\%}: các peer đã biết nhau vẫn trao đổi chunk trực tiếp. Hai leecher tham gia trong thời gian tracker ngừng hoạt động không tìm được nguồn cho tới khi tracker hoạt động trở lại (nhờ announce thử lại với backoff). Sau khi tracker khởi động lại, swarm được đăng ký lại đầy đủ sau khoảng 1.5 s mà tracker không cần lưu bất kỳ trạng thái nào.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\textwidth]{images/exp5_tracker_load.png}
-\caption{Số announce tới tracker mỗi giây (đánh dấu khoảng tracker sập)}
+\caption{Số announce tới tracker mỗi giây (đánh dấu khoảng thời gian tracker ngừng hoạt động)}
 \end{figure}
 
 \begin{figure}[H]
@@ -771,7 +771,7 @@ Tỉ lệ thành công & 100\% (0 lỗi)\\
 \end{tabular}
 \end{table}
 
-Phần lớn request được xử lý dưới 11 ms. Một số ít request có độ trễ cao (p99) do hàng đợi kết nối của socket bị đầy trong đợt đầu, khi 20 luồng cùng mở kết nối mới. Với quy mô vài chục peer announce mỗi 2 giây như trong thí nghiệm thì tracker dư sức đáp ứng.
+Phần lớn request được xử lý dưới 11 ms. Một số ít request có độ trễ cao (p99) do hàng đợi kết nối của socket bị đầy trong đợt đầu, khi 20 luồng cùng mở kết nối mới. Với quy mô vài chục peer announce mỗi 2 giây như trong thí nghiệm thì tracker hoàn toàn đáp ứng được yêu cầu.
 
 \section{Demo}
 Lệnh \texttt{py demo/run\_demo.py} chạy khoảng 30 giây và kiểm tra đủ 7 tình huống bắt buộc của đề: (1) tạo metadata và chia sẻ; (2) tải song song từ ít nhất 2 peer; (3) leecher upload trước khi tải xong; (4) dừng một nguồn giữa chừng; (5) tự chuyển nguồn; (6) phát hiện và từ chối chunk sai hash; (7) ghép file và xác minh hash. Kết quả: \texttt{RESULT: 7/7}.
@@ -784,15 +784,15 @@ Lệnh \texttt{py demo/run\_demo.py} chạy khoảng 30 giây và kiểm tra đ�
   \item Xây dựng hoàn chỉnh hệ thống chia sẻ file P2P kiểu BitTorrent gồm tracker, peer và bộ mô phỏng; các thành phần chạy như tiến trình riêng và giao tiếp qua mạng thật.
   \item \textbf{Tính đúng:} trong mọi kịch bản, leecher báo \texttt{completed} đều có file trùng SHA-256 với file gốc; chunk sai hash luôn bị từ chối.
   \item \textbf{Hiệu năng:} tăng khi thêm nguồn (multi-seed nhanh hơn 2.12 lần) và nhờ leecher phục vụ lại (tới 82\% dữ liệu trong flash crowd).
-  \item \textbf{Chịu lỗi:} mất nguồn thì tự đổi nguồn; tracker sập không làm gián đoạn việc trao đổi chunk; swarm tự dựng lại sau khi tracker khởi động lại.
+  \item \textbf{Chịu lỗi:} mất nguồn thì tự đổi nguồn; việc tracker ngừng hoạt động không làm gián đoạn việc trao đổi chunk; swarm tự dựng lại sau khi tracker khởi động lại.
   \item Có bộ kiểm thử tự động, pipeline thí nghiệm sinh CSV/biểu đồ và demo một lệnh.
-  \item Về làm việc nhóm: cách ``chốt hợp đồng trước, mỗi người tự viết mock'' giúp ba người làm song song gần như không phải chờ nhau, và việc tích hợp cuối cùng chỉ là đổi tham số dòng lệnh.
+  \item Về tổ chức làm việc nhóm: phương pháp thống nhất hợp đồng giao tiếp trước và để mỗi thành viên tự xây dựng mock giúp ba thành viên phát triển song song mà hầu như không phụ thuộc tiến độ của nhau; giai đoạn tích hợp cuối cùng chỉ cần thay đổi tham số dòng lệnh.
 \end{itemize}
 
 \section{Hạn chế}
 \begin{itemize}
   \item Mọi thứ chạy trên một máy (loopback) nên độ trễ và băng thông là giả lập, chưa phản ánh hết mạng thật (mất gói, NAT, tường lửa).
-  \item Tracker vẫn là thành phần tập trung: peer mới không thể tham gia khi tracker sập.
+  \item Tracker vẫn là thành phần tập trung: peer mới không thể tham gia khi tracker ngừng hoạt động.
   \item Chỉ giới hạn băng thông chiều upload; cơ chế choke còn đơn giản (chưa có tit-for-tat và optimistic unchoke như BitTorrent gốc).
   \item Metainfo dùng JSON thay vì bencode nên không tương thích với client BitTorrent thật.
   \item Kết quả thời gian có dao động nhỏ giữa các lần chạy do lập lịch luồng của hệ điều hành (lịch churn thì tất định).
