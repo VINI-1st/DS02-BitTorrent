@@ -9,13 +9,20 @@ Outputs (in ``--out-dir``, default ``results/``):
   bytes/pieces downloaded and uploaded, distinct sources, fault counters, exit code.
 * ``<scenario>_timeseries.csv`` – one row per time bucket: active peers,
   ``download_kbps``, ``upload_kbps``, ``tracker_announces``,
-  ``tracker_announces_failed``, ``tracker_up``, ``completion_ratio_pct``,
+  ``tracker_announces_failed``, ``tracker_http_requests``, ``tracker_up``, ``completion_ratio_pct``,
   ``avg_chunk_replication``, ``min_chunk_replication`` and ``chunk_<i>_replicas``.
 * ``<scenario>_summary.csv``    – one row with the scenario-level numbers
   (also returned as a dict and aggregated by run_experiments into
   ``summary_metrics.csv``).
 
 Units: ``*_kbps`` = KiB/s, the same unit as ``--max-up-kbps`` in Contract 4.
+
+Tracker load is measured on both sides:
+* peer side  – ``announce_ok`` / ``announce_failed`` logged by every peer (always available);
+* server side – ``tracker_http_requests``: ``/announce`` requests logged by the tracker itself
+  (Role A's tracker logs ``http_request`` with ``request = "GET /announce?..."``; the StubTracker
+  logs ``announce_ok`` with ``peer_id = "tracker"`` when started with ``--log-requests``).
+  Stays 0 when the tracker does not log requests.
 
 Identity of a node: ``meta.node`` (added by the launcher when a real peer uses
 another id) or ``peer_id``. Role comes from the launcher's ``spawned`` event,
@@ -133,6 +140,7 @@ def analyze(records: list[dict], bucket_sec: float = 1.0) -> dict[str, Any]:
     ul = [0] * nbuckets
     ann = [0] * nbuckets
     ann_fail = [0] * nbuckets
+    srv_req = [0] * nbuckets
 
     def bucket(ts: float) -> int:
         return min(nbuckets - 1, max(0, int((ts - t0) // bucket_sec)))
@@ -156,6 +164,12 @@ def analyze(records: list[dict], bucket_sec: float = 1.0) -> dict[str, Any]:
                 tracker_windows.append((crash_open if crash_open is not None else ts, ts))
                 restart_ts.append(ts)
                 crash_open = None
+            elif ev == "http_request":
+                req = str(r.get("request") or meta.get("request") or "")
+                if "/announce" in req:
+                    srv_req[bucket(ts)] += 1
+            elif ev == "announce_ok":  # StubTracker --log-requests
+                srv_req[bucket(ts)] += 1
             continue
         node = node_of(r)
         p = peer(node)
@@ -261,6 +275,7 @@ def analyze(records: list[dict], bucket_sec: float = 1.0) -> dict[str, Any]:
             "upload_kbps": round(ul[b] / 1024.0 / bucket_sec, 2),
             "tracker_announces": ann[b],
             "tracker_announces_failed": ann_fail[b],
+            "tracker_http_requests": srv_req[b],
             "tracker_up": up,
             "completed_leechers": len(completed & leech_seen),
             "completion_ratio_pct": round(100.0 * len(completed & leech_seen) / len(leech_seen), 2) if leech_seen else 0.0,
@@ -339,7 +354,10 @@ def analyze(records: list[dict], bucket_sec: float = 1.0) -> dict[str, Any]:
         "total_tracker_announces_failed": sum(ann_fail),
         "peak_tracker_announces_per_bucket": max(ann) if ann else 0,
         "mean_tracker_announces_per_sec": round(sum(ann) / duration, 3) if duration > 0 else 0.0,
+        "total_tracker_http_requests": sum(srv_req),
         "tracker_downtime_sec": round(sum(((e if e is not None else t_end) - s) for s, e in tracker_windows), 3),
+        # time from tracker_restarted to the FIRST successful announce of any peer
+        # (not the time until every peer has re-registered)
         "tracker_recovery_sec": round(max(recovery), 3) if recovery else "",
         "invalid_chunks": sum(p.invalid for p in peers.values()),
         "peer_lost_events": sum(p.lost for p in peers.values()),
@@ -379,7 +397,20 @@ def analyze_and_export(scenario_name: str, log_path: str | Path, out_dir: str | 
 
 
 def write_summary_table(summaries: list[dict[str, Any]], path: str | Path) -> None:
-    _write_csv(Path(path), summaries)
+    """Write one row per scenario; old rows without a newer column get an empty cell."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields: list[str] = []
+    for row in summaries:
+        for k in row:
+            if k not in fields:
+                fields.append(k)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        if not summaries:
+            return
+        writer = csv.DictWriter(f, fieldnames=fields, restval="")
+        writer.writeheader()
+        writer.writerows(summaries)
 
 
 def main() -> int:

@@ -289,6 +289,37 @@ def _fmt(v: Any, unit: str = "", nd: int = 2) -> str:
         return str(v)
 
 
+def _scenario_cfg(name: str) -> dict[str, Any]:
+    """Scenario YAML (used to tell static from churn peers and to quote churn parameters)."""
+    try:
+        import yaml
+
+        with open(REPO_ROOT / "scenarios" / f"{name}.yaml", "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except (OSError, ImportError, ValueError):
+        return {}
+
+
+def _port_of(peer_id: str) -> int:
+    try:
+        return int(str(peer_id).rsplit("-", 1)[1])
+    except (IndexError, ValueError):
+        return -1
+
+
+def _static_port_limit(cfg: dict[str, Any]) -> int:
+    """First port that is NOT a static seed/leecher (churn and late joiners start above it)."""
+    sw = cfg.get("swarm", {}) or {}
+    base = int(sw.get("base_port", 9001))
+    return base + int(sw.get("num_seeds", 1)) + int(sw.get("num_leechers", 3))
+
+
+def _complete_rel(p: dict[str, str]) -> float | None:
+    if p.get("download_time_sec") in ("", None):
+        return None
+    return fnum(p["start_rel_sec"]) + fnum(p["download_time_sec"])
+
+
 def write_analysis_report(results_dir: Path, meta: dict[str, Any] | None = None) -> Path:
     meta = meta or {}
     rows = {r["scenario"]: r for r in read_csv(results_dir / "summary_metrics.csv")}
@@ -302,19 +333,23 @@ def write_analysis_report(results_dir: Path, meta: dict[str, Any] | None = None)
     lines.append("# Báo cáo thực nghiệm và đánh giá hiệu năng (C6)")
     lines.append("")
     lines.append(f"_Sinh tự động bởi `py src/sim/run_experiments.py` lúc {meta.get('generated_at', '')}. "
-                 f"Peer: `{meta.get('peer', 'src/sim/stub_peer.py')}` · Tracker: `{meta.get('tracker', 'src/sim/stub_tracker.py')}`._")
+                 f"Peer: `{meta.get('peer', 'src/sim/stub_peer.py')}` · Tracker: `{meta.get('tracker', 'src/sim/stub_tracker.py')}`"
+                 + (f" · Máy chạy: {meta['platform']}" if meta.get("platform") else "") + "._")
     lines.append("")
     lines.append("## 1. Phương pháp")
     lines.append("")
     lines.append("- Mỗi kịch bản trong `scenarios/*.yaml` được chạy bằng launcher (C1): tracker và mọi peer là **tiến trình hệ điều hành riêng**, "
                  "giao tiếp qua TCP/HTTP thật trên `127.0.0.1`. Dữ liệu là file 2 MiB sinh tất định, chia thành 16 chunk 128 KiB; "
                  "mỗi chunk được kiểm SHA-1 khi nhận, file ghép xong được so SHA-256 với file gốc.")
-    lines.append("- Băng thông upload mỗi peer bị giới hạn bằng `--max-up-kbps` (KiB/s, Hợp đồng 4); độ trễ thêm bằng `--latency-ms` (chỉ StubPeer).")
+    lines.append("- Băng thông upload mỗi peer bị giới hạn bằng `--max-up-kbps` (KiB/s, Hợp đồng 4); độ trễ thêm ở tầng ứng dụng bằng `--latency-ms` (peer của B và StubPeer).")
     lines.append("- Churn (C2) sinh từ `random_seed=42`: cùng seed cho cùng dãy sự kiện vào/ra/sập (dấu vân tay lịch churn ghi trong sự kiện `scenario_start`).")
     lines.append("- Số liệu (C4) tính từ `logs/<kịch bản>/events.jsonl`; CSV trong `results/`, biểu đồ trong `results/charts/`. Đơn vị `kbps` = KiB/s.")
     if meta.get("stub"):
-        lines.append("- **Lưu ý:** kết quả này đo bằng StubPeer/StubTracker của C. Khi peer thật của B và tracker thật của A sẵn sàng, "
-                     "chạy lại `py src/sim/run_experiments.py --peer-script \"-m peer\" --tracker-script \"-m tracker\"` để có số liệu cuối cùng.")
+        lines.append("- **Lưu ý:** peer trong các lần chạy này là StubPeer của C (tuân Hợp đồng 1, 2, 4, 5; handshake rút gọn, không phải Hợp đồng 3). "
+                     "Khi peer của B sẵn sàng, chạy lại `py src/sim/run_experiments.py --peer-script \"-m peer\" --tracker-script \"-m src.tracker\"` "
+                     "để có số liệu cuối cùng.")
+    lines.append("- Mỗi kịch bản chạy **một lần**; thời gian tải có thể dao động vài trăm ms giữa các lần chạy. "
+                 "Thời gian tải trung bình chỉ tính leecher đã tải xong (leecher rời đi trước khi xong được tính trong tỉ lệ hoàn tất).")
     lines.append("")
     lines.append("## 2. Bảng tổng hợp")
     lines.append("")
@@ -358,38 +393,87 @@ def write_analysis_report(results_dir: Path, meta: dict[str, Any] | None = None)
     lines.append("")
     # high churn
     hc = peers.get("high_churn", [])
-    dyn = [p for p in hc if p["role"] == "leech" and fnum(p["start_rel_sec"]) > 1.0]
+    hc_cfg = _scenario_cfg("high_churn")
+    limit = _static_port_limit(hc_cfg) if hc_cfg else 9100
+    dyn = [p for p in hc if p["role"] == "leech" and _port_of(p["peer_id"]) >= limit]
+    static = [p for p in hc if p["role"] == "leech" and 0 <= _port_of(p["peer_id"]) < limit]
     dyn_done = [p for p in dyn if p["completed"] == "1"]
+    static_done = [p for p in static if p["completed"] == "1"]
     crashed = [p for p in dyn if "crash" in p.get("end_reason", "")]
+    left = [p for p in dyn if p.get("end_reason") == "churn_leave"]
+    ch = hc_cfg.get("churn", {}) or {}
+    lam = fnum(ch.get("arrival_rate_per_sec", 0))
+    mean_life = fnum(ch.get("mean_lifetime_sec", 0))
+    alpha = fnum(ch.get("pareto_alpha", 2.0), 2.0)
+    pareto = str(ch.get("lifetime_dist", "exponential")) == "pareto" and alpha > 1
     lines.append("### 3.3 High churn – Poisson + Pareto + crash")
-    lines.append(f"- **Kết quả:** {g('high_churn', 'total_leechers')} leecher tham gia ({len(dyn)} leecher động, {len(crashed)} bị kill đột ngột). "
-                 f"Tỉ lệ hoàn tất **{_fmt(g('high_churn', 'completion_ratio_pct'), '%', 0)}** ({len(dyn_done)}/{len(dyn)} leecher động tải xong trước khi rời). "
+    lines.append(f"- **Kết quả:** {g('high_churn', 'total_leechers')} leecher tham gia: {len(static)} leecher tĩnh "
+                 f"({len(static_done)}/{len(static)} tải xong) và {len(dyn)} leecher động "
+                 f"({len(dyn_done)}/{len(dyn)} tải xong trước khi rời; {len(crashed)} bị kill đột ngột, {len(left)} rời đàng hoàng). "
+                 f"Tỉ lệ hoàn tất chung **{_fmt(g('high_churn', 'completion_ratio_pct'), '%', 0)}**. "
                  f"Ghi nhận **{g('high_churn', 'peer_lost_events')}** lần `peer_lost` và **{g('high_churn', 'switch_source_events')}** lần `switch_source`; "
                  f"hệ số nhân bản thấp nhất quan sát được = {g('high_churn', 'min_chunk_replication_observed')}.")
+    if pareto and mean_life:
+        xm = mean_life * (alpha - 1) / alpha
+        median = xm * 2 ** (1 / alpha)
+        var_note = "phương sai vô hạn (α ≤ 2)" if alpha <= 2 else "phương sai hữu hạn"
+        life_txt = (f"Thời gian sống Pareto (α = {alpha:g}, trung bình {mean_life:g} s) có giá trị nhỏ nhất x_m = {xm:.2f} s, "
+                    f"trung vị ≈ {median:.1f} s và {var_note}: đa số peer chỉ sống {xm:.1f}–{median:.1f} s, "
+                    "ngắn hơn thời gian cần để tải đủ file, trong khi vài peer sống rất lâu.")
+    else:
+        life_txt = "Peer có thời gian sống ngắn hơn thời gian cần để tải đủ file sẽ rời đi trước khi xong."
+    if lam:
+        life_txt += (f" Peer động đến theo Poisson λ = {lam:g}/s nhưng bị giới hạn ở "
+                     f"{int(fnum(ch.get('max_dynamic_peers', 10)))} peer (`max_dynamic_peers`).")
     lines.append("- **Kết luận:** leecher bị kill giữa lúc đang phục vụ làm đứt kết nối của peer khác; các peer phát hiện (`peer_lost`) và "
-                 "chuyển chunk sang nguồn khác (`switch_source`) nên các leecher tĩnh vẫn tải xong đúng hash. Peer có thời gian sống ngắn "
-                 "(đuôi nặng của Pareto: nhiều peer sống rất ngắn) không kịp tải đủ – đây là nguyên nhân chính làm tỉ lệ hoàn tất < 100%. "
-                 "Do seed gốc luôn online nên mọi chunk luôn có ít nhất 1 bản sao.")
+                 "chuyển chunk sang nguồn khác (`switch_source`) nên các leecher tĩnh vẫn tải xong đúng hash. " + life_txt +
+                 " Seed gốc luôn online nên mọi chunk luôn có ít nhất 1 bản sao. Thời gian tải trung bình của kịch bản này "
+                 "không so trực tiếp với baseline được vì chỉ tính các peer đã tải xong (survivor bias).")
     lines.append("")
     # flash crowd
+    fc = peers.get("flash_crowd", [])
+    fc_leech = [p for p in fc if p["role"] == "leech"]
+    departed = [p for p in fc_leech if str(p.get("end_reason", "")).startswith("churn_")]
+    dep_t = min((fnum(p["end_rel_sec"]) for p in departed), default=None)
+    last_done = max((t for t in (_complete_rel(p) for p in fc_leech) if t is not None), default=None)
+    left_unfinished = [p for p in departed if p["completed"] != "1"]
     lines.append("### 3.4 Flash crowd – 8 leecher ập vào cùng lúc, rồi rời đồng loạt")
-    lines.append(f"- **Kết quả:** tỉ lệ hoàn tất **{_fmt(g('flash_crowd', 'completion_ratio_pct'), '%', 0)}**, thời gian tải trung bình "
+    lines.append(f"- **Kết quả:** tỉ lệ hoàn tất **{_fmt(g('flash_crowd', 'completion_ratio_pct'), '%', 0)}** "
+                 f"({g('flash_crowd', 'completed_leechers')}/{g('flash_crowd', 'total_leechers')}), thời gian tải trung bình "
                  f"**{_fmt(g('flash_crowd', 'mean_download_time_sec'), ' s', 2)}** (dài nhất {_fmt(g('flash_crowd', 'max_download_time_sec'), ' s', 1)}); "
                  f"leecher phục vụ **{_fmt(g('flash_crowd', 'leecher_upload_share_pct'), '%', 0)}** dữ liệu; tải tracker đỉnh "
                  f"{g('flash_crowd', 'peak_tracker_announces_per_bucket')} announce/giây.")
+    if dep_t is not None and last_done is not None and dep_t >= last_done:
+        dep_txt = (f"Đợt rời đồng loạt bắt đầu ở {dep_t:.1f} s, **sau** khi leecher cuối cùng đã xong ({last_done:.1f} s), "
+                   "nên kịch bản này chỉ đo được tác động của đợt ập vào, không đo được tác động của việc rời đồng loạt.")
+    elif dep_t is not None:
+        dep_txt = (f"Đợt rời đồng loạt bắt đầu ở {dep_t:.1f} s, khi swarm còn đang tải: {len(departed)} leecher rời đi, "
+                   f"trong đó {len(left_unfinished)} chưa tải xong. Hệ số nhân bản sụt xuống ngay sau đó (biểu đồ exp3); "
+                   "nhờ seed gốc vẫn online nên không chunk nào biến mất và các leecher còn lại vẫn tải xong.")
+    else:
+        dep_txt = "Không có peer nào rời theo lịch trong lần chạy này."
     lines.append("- **Kết luận:** khi cả đám đông cùng đến, một seed không đủ băng thông; swarm vẫn chịu được vì chunk vừa tải xong lập tức được "
-                 "phục vụ lại (rarest-first giúp các leecher giữ những chunk khác nhau). Hệ số nhân bản tăng nhanh sau đợt ập vào và sụt mạnh khi "
-                 "rời đồng loạt (biểu đồ exp3); seed gốc là điều kiện để chunk không biến mất.")
+                 "phục vụ lại (rarest-first giúp các leecher giữ những chunk khác nhau). " + dep_txt)
     lines.append("")
     # tracker crash
+    tc_ts = read_csv(results_dir / "tracker_crash_timeseries.csv")
+    down_kib = sum(fnum(r.get("download_kbps")) for r in tc_ts if r.get("tracker_up") == "0")
+    tc_peers = peers.get("tracker_crash", [])
+    tc_cfg = _scenario_cfg("tracker_crash")
+    tc_limit = _static_port_limit(tc_cfg) if tc_cfg else 9300
+    late = [p for p in tc_peers if p["role"] == "leech" and _port_of(p["peer_id"]) >= tc_limit]
+    late_done = [p for p in late if p["completed"] == "1"]
     lines.append("### 3.5 Tracker crash – tracker bị kill ở giây 3, sống lại ở giây 8")
-    lines.append(f"- **Kết quả:** tracker ngừng {_fmt(g('tracker_crash', 'tracker_downtime_sec'), ' s', 1)}; có "
-                 f"**{g('tracker_crash', 'total_tracker_announces_failed')}** announce thất bại trong thời gian sập; swarm đăng ký lại sau "
-                 f"**{_fmt(g('tracker_crash', 'tracker_recovery_sec'), ' s', 2)}** kể từ khi tracker khởi động lại. Tỉ lệ hoàn tất "
+    lines.append(f"- **Kết quả:** tiến trình tracker bị kill và ngừng {_fmt(g('tracker_crash', 'tracker_downtime_sec'), ' s', 1)}; có "
+                 f"**{g('tracker_crash', 'total_tracker_announces_failed')}** announce thất bại trong thời gian sập; announce thành công đầu tiên "
+                 f"đến **{_fmt(g('tracker_crash', 'tracker_recovery_sec'), ' s', 2)}** sau khi tracker khởi động lại. "
+                 f"Trong lúc tracker sập vẫn có **{down_kib:.0f} KiB** được tải xong giữa các peer. "
+                 f"{len(late_done)}/{len(late)} leecher đến trong lúc tracker sập vẫn tải xong. Tỉ lệ hoàn tất "
                  f"**{_fmt(g('tracker_crash', 'completion_ratio_pct'), '%', 0)}** ({g('tracker_crash', 'completed_leechers')}/{g('tracker_crash', 'total_leechers')}).")
-    lines.append("- **Kết luận:** tracker chỉ dùng để tìm peer; các peer đã biết nhau tiếp tục trao đổi chunk trực tiếp khi tracker sập. "
+    lines.append("- **Kết luận:** tracker chỉ dùng để tìm peer, không nằm trên đường dữ liệu; các peer đã biết nhau tiếp tục trao đổi chunk trực tiếp khi tracker sập. "
                  "Leecher mới đến trong lúc tracker sập không tìm được nguồn cho tới khi tracker sống lại (announce thử lại với back-off), "
-                 "sau đó tracker dựng lại swarm hoàn toàn từ các announce định kỳ mà không cần lưu trạng thái.")
+                 "sau đó tracker dựng lại swarm từ các announce định kỳ vì nó chỉ giữ trạng thái mềm (soft state) trong bộ nhớ. "
+                 "Các bucket 0 KiB/s trên biểu đồ thông lượng là do số liệu được ghi khi cả chunk 128 KiB hoàn tất, không phải do tracker.")
     lines.append("")
     lines.append("## 4. Biểu đồ khác")
     lines.append("")
@@ -403,12 +487,39 @@ def write_analysis_report(results_dir: Path, meta: dict[str, Any] | None = None)
     lines.append("- Hệ thống giữ **tính đúng** trong mọi kịch bản: mọi leecher báo `completed` đều có file trùng SHA-256 với file gốc; chunk sai hash bị từ chối.")
     lines.append("- **Hiệu năng** tăng theo số nguồn (multi-seed) và nhờ leecher phục vụ lại (baseline, flash crowd).")
     lines.append("- **Chịu lỗi:** mất nguồn → `peer_lost` → `switch_source`; tracker sập không làm gián đoạn trao đổi chunk giữa các peer đã biết nhau.")
-    lines.append("- **Hạn chế:** chạy trên một máy (loopback) nên độ trễ/băng thông là mô phỏng; giới hạn băng thông là của phía upload; "
-                 "kết quả có dao động nhỏ giữa các lần chạy do lập lịch luồng của hệ điều hành (lịch churn thì tất định).")
+    lines.append("- **Hạn chế:** chạy trên một máy (loopback) nên độ trễ/băng thông là mô phỏng ở tầng ứng dụng (không có `tc netem` trên Windows); "
+                 "giới hạn băng thông là của phía upload; mỗi kịch bản chạy một lần nên chưa có khoảng tin cậy; "
+                 "kết quả có dao động nhỏ giữa các lần chạy do lập lịch luồng của hệ điều hành (lịch churn thì tất định); "
+                 "tải tracker được đo phía peer (`announce_ok`/`announce_failed`), số request phía server chỉ có khi tracker ghi log request.")
     lines.append("")
     path = results_dir / "analysis.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+def _meta_from_logs() -> dict[str, Any]:
+    """Recover which peer / tracker produced the CSVs from logs/<scenario>/events.jsonl (scenario_start)."""
+    import json
+    import time
+
+    for name in SCENARIO_ORDER:
+        log = REPO_ROOT / "logs" / name / "events.jsonl"
+        try:
+            with open(log, "r", encoding="utf-8") as f:
+                for line in f:
+                    rec = json.loads(line)
+                    if rec.get("event") == "scenario_start":
+                        m = rec.get("meta") or {}
+                        peer, tracker = str(m.get("peer", "")), str(m.get("tracker", ""))
+                        return {
+                            "generated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(rec["ts"]))),
+                            "peer": peer,
+                            "tracker": tracker,
+                            "stub": "stub_peer" in peer,
+                        }
+        except (OSError, ValueError, KeyError):
+            continue
+    return {}
 
 
 def main() -> int:
@@ -418,7 +529,7 @@ def main() -> int:
     res = Path(args.results)
     for p in plot_all_charts(res, res / "charts"):
         print(f"chart: {p}")
-    print(f"report: {write_analysis_report(res)}")
+    print(f"report: {write_analysis_report(res, _meta_from_logs())}")
     return 0
 
 

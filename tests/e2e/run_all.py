@@ -1,8 +1,8 @@
 """C5 – Full automated test suite with one command and a PASS/FAIL table.
 
-    py tests/e2e/run_all.py                     # everything (unit + E2E), about 2-3 minutes
+    py tests/e2e/run_all.py                     # everything (unit + E2E) against Role B peer + Role A tracker, ~3 min
     py tests/e2e/run_all.py --quick             # unit tests + fast fault-injection E2E only
-    py tests/e2e/run_all.py --peer-script "-m peer" --tracker-script "-m tracker"   # against A + B
+    py tests/e2e/run_all.py --peer-script src/sim/stub_peer.py --tracker-script src/sim/stub_tracker.py   # C's stand-ins
 
 Categories covered (spec section 9): Functional, Concurrency, Fault & Recovery,
 Security / invalid data, Performance. Every E2E test starts real OS processes,
@@ -39,6 +39,15 @@ from src.sim.procutil import child_env  # noqa: E402
 
 E2E_LOGS = REPO / "logs" / "e2e"
 E2E_RESULTS = REPO / "results" / "e2e"
+
+#: Minimum number of tests per category required by the course (spec section 9).
+REQUIRED_PER_CATEGORY = {
+    "Functional": 8,
+    "Concurrency": 2,
+    "Fault & Recovery": 2,
+    "Security": 2,
+    "Performance": 1,
+}
 
 
 class Check(Exception):
@@ -241,24 +250,40 @@ class Suite:
             robust_rmtree(res.work_dir)
 
     def t_failover(self) -> str:
+        killed = "seed-9432"
         cfg = {
             "name": "e2e_failover",
             "torrent": {"file_name": "fo.bin", "file_size_bytes": 1_048_576, "piece_length": 131072},
             "swarm": {"num_seeds": 2, "num_leechers": 2, "base_port": 9431, "max_up_kbps": 128},
-            "faults": {"kill_peers": [{"target": "seed-9432", "at_sec": 2.0, "mode": "crash"}]},
+            # 4 s: late enough that the source is serving even when process start-up is slow
+            # (Windows), early enough that the download (~13 s) is still running.
+            "faults": {"kill_peers": [{"target": killed, "at_sec": 4.0, "mode": "crash"}]},
             "simulation": {"duration_sec": 45, "random_seed": 4},
         }
         res = self.run(cfg)
         try:
             ev = self.events(res)
-            lost = [e for e in ev if e["event"] == "peer_lost" and (e.get("meta") or {}).get("peer") == "seed-9432"]
-            sw = [e for e in ev if e["event"] == "switch_source" and (e.get("meta") or {}).get("old_peer") == "seed-9432"]
+            kill_ts = min(e["ts"] for e in ev if e["event"] == "fault_kill_peer")
+            served = [e for e in ev if e["event"] == "piece_uploaded" and e["peer_id"] == killed and e["ts"] < kill_ts]
+            require(served, f"{killed} had not served anything before the kill – the test did not kill an active source")
+            lost = [e for e in ev if e["event"] == "peer_lost" and (e.get("meta") or {}).get("peer") == killed]
             require(lost, "no peer_lost for the killed source")
-            require(sw, "no switch_source away from the killed source")
+            # Failover property: every chunk that was in flight from the dead source is re-requested
+            # from another source (switch_source) and finally downloaded from a different peer.
+            inflight = {(e["peer_id"], e["chunk_index"]) for e in lost if isinstance(e.get("chunk_index"), int)}
+            sw = [e for e in ev if e["event"] == "switch_source" and (e.get("meta") or {}).get("old_peer") == killed]
+            require(inflight or sw, "the source died with no chunk in flight – nothing to fail over (re-run)")
+            for leech, ci in sorted(inflight):
+                require(any(e["peer_id"] == leech and e["chunk_index"] == ci for e in sw),
+                        f"{leech}: no switch_source for chunk {ci} that was in flight from {killed}")
+                got = [e for e in ev if e["event"] == "piece_done" and e["peer_id"] == leech and e["chunk_index"] == ci]
+                require(got and all((e.get("meta") or {}).get("from_peer") != killed for e in got),
+                        f"{leech}: chunk {ci} was not re-downloaded from another source")
             require(min(e["ts"] for e in sw) >= min(e["ts"] for e in lost) - 0.01, "switch_source happened before peer_lost")
             n, probs = self.verify_files(res)
             require(n == 2 and not probs, f"downloads did not finish correctly: {probs or n}")
-            return f"{len(lost)} peer_lost -> {len(sw)} switch_source; both leechers finished with correct hash"
+            return (f"{len(lost)} peer_lost ({len(inflight)} chunk(s) in flight) -> {len(sw)} switch_source; "
+                    "both leechers finished with correct hash")
         finally:
             robust_rmtree(res.work_dir)
 
@@ -335,6 +360,14 @@ class Suite:
             ("Unit: Role C modules (src/sim)", "Functional", lambda: self.unit("tests.test_sim_modules", "Role C")),
             ("Unit: Role B metainfo (B1)", "Functional", lambda: self.unit("tests.test_metainfo", "metainfo")),
             ("Unit: Role B storage (B2)", "Security", lambda: self.unit("tests.test_storage", "storage")),
+            ("Unit: Role B piece picker (B3)", "Functional", lambda: self.unit("tests.test_piece_picker", "piece picker")),
+            ("Unit: Role B peer core (B4-B7)", "Fault & Recovery", lambda: self.unit("tests.test_peer", "peer")),
+            # Role A – tracker includes test_concurrent_100_peers / test_concurrent_http_announces / TTL expiry
+            ("Unit: Role A tracker (A1-A3)", "Functional", lambda: self.unit("tests.test_tracker", "tracker")),
+            ("Unit: Role A wire protocol (A4)", "Security", lambda: self.unit("tests.test_protocol", "protocol")),
+            ("Unit: Role A tracker client (A6)", "Fault & Recovery", lambda: self.unit("tests.test_trackerclient", "tracker client")),
+            # tests.test_network (A5) is not included: test_send_have fails (Have has no 'index')
+            # and test_inbound_limit hangs – reported to A in docs/issues-from-C.md.
             ("Contract 4: leecher exits 0 after completing", "Functional", self.t_contract4_exit_code),
             ("Churn: same seed => same schedule (CLI)", "Functional", self.t_churn_cli_determinism),
             ("Invalid chunk detected & rejected", "Security", self.t_invalid_chunk),
@@ -349,7 +382,7 @@ class Suite:
                 ("Scenario high_churn (Poisson+Pareto+crash)", "Concurrency", lambda: self.t_scenario("high_churn", self.x_high_churn)),
                 ("Scenario flash_crowd (burst + mass departure)", "Concurrency", lambda: self.t_scenario("flash_crowd", self.x_flash_crowd)),
                 ("Scenario tracker_crash (kill + respawn)", "Fault & Recovery", lambda: self.t_scenario("tracker_crash", self.x_tracker_crash)),
-                ("Metrics CSV export (C4) for every scenario", "Performance", self.t_metrics_csv),
+                ("Metrics CSV export (C4) for every scenario", "Functional", self.t_metrics_csv),
             ]
         for name, cat, fn in plan:
             if only and not any(o.lower() in name.lower() for o in only):
@@ -367,6 +400,13 @@ class Suite:
         print("-" * (w_name + 44))
         for i, o in enumerate(self.outcomes, 1):
             print(f" {i:>2}. {o.detail}")
+        print("-" * (w_name + 44))
+        print(" Coverage per category (passed / run, course minimum):")
+        for cat, minimum in REQUIRED_PER_CATEGORY.items():
+            run = [o for o in self.outcomes if o.category == cat]
+            ok = sum(o.ok for o in run)
+            mark = "OK " if ok >= minimum else "LOW"
+            print(f"   [{mark}] {cat:<17} {ok:>2} / {len(run):<2} (min {minimum})")
         passed = sum(o.ok for o in self.outcomes)
         print("=" * (w_name + 44))
         print(f" RESULT: {passed}/{len(self.outcomes)} passed — {'ALL TESTS PASSED' if passed == len(self.outcomes) else 'SOME TESTS FAILED'}")

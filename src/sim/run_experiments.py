@@ -1,8 +1,8 @@
 """C6 – Run the 5 standard experiments, export CSVs, draw charts, write the analysis.
 
-    py src/sim/run_experiments.py                       # stub peer + stub tracker
+    py src/sim/run_experiments.py                       # Role B peer + Role A tracker
     py src/sim/run_experiments.py --only baseline multi_seed
-    py src/sim/run_experiments.py --peer-script "-m peer" --tracker-script "-m tracker"
+    py src/sim/run_experiments.py --peer-script src/sim/stub_peer.py --tracker-script src/sim/stub_tracker.py   # C's stand-ins
 
 Outputs:
     logs/<scenario>/events.jsonl, logs/<scenario>/processes.json
@@ -14,6 +14,7 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import platform
 import sys
 import time
 from pathlib import Path
@@ -36,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--make-torrent-script", default=None)
     p.add_argument("--results", default=str(REPO_ROOT / "results"))
     p.add_argument("--verbose", action="store_true", help="echo every event")
+    p.add_argument("--logs-root", default=None, help="where logs/<scenario>/ is written (default: <repo>/logs)")
     args = p.parse_args(argv)
 
     names = args.only or SCENARIO_ORDER
@@ -53,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
             make_torrent=args.make_torrent_script,
             echo=args.verbose,
         )
+        if args.logs_root:
+            opts.logs_root = Path(args.logs_root)
         res = ScenarioRunner(yaml_path, opts).run()
         print(f"    finished in {res.duration_sec:.1f}s, {len(res.completed_nodes)} peer(s) completed", flush=True)
         summaries.append(analyze_and_export(name, res.log_path, results))
@@ -74,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
             "peer": args.peer_script,
             "tracker": args.tracker_script,
             "stub": "stub_peer" in args.peer_script,
+            "platform": f"{platform.system()} {platform.release()} · Python {platform.python_version()}",
         },
     )
     print(f"\n=== [C6] {len(names)} scenario(s) in {time.time() - t_all:.1f}s ===")
