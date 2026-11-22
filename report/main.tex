@@ -624,14 +624,15 @@ Một đặc điểm quan trọng là \textbf{leecher phục vụ chunk ngay sau
   \item \textbf{C7 -- demo:} \texttt{demo/run\_demo.py} hiển thị dashboard trên terminal: số peer, vai trò, bitfield dạng \texttt{[\#\#\#\#....] 4/16}, số chunk đã upload, sự kiện gần nhất và danh sách 7 tình huống bắt buộc -- mỗi mục chỉ được đánh dấu khi sự kiện thật xảy ra.
 \end{itemize}
 
-Ngoài ra, thành viên C xây dựng \texttt{StubPeer} và \texttt{StubTracker} -- phiên bản tối giản nhưng hoạt động thực sự (TCP, SHA-1, rarest-first) -- để có thể tiến hành mô phỏng ngay từ đầu, khi peer và tracker thật chưa hoàn thiện. Khi module thật hoàn thành, chỉ cần đổi tham số \texttt{--peer-script {\char34}-m peer{\char34}} và \texttt{--tracker-script {\char34}-m src.tracker{\char34}}, không cần sửa mã của C.
+Ngoài ra, thành viên C xây dựng \texttt{StubPeer} và \texttt{StubTracker} -- phiên bản tối giản nhưng hoạt động thực sự (TCP, SHA-1, rarest-first) -- để có thể tiến hành mô phỏng ngay từ đầu, khi peer và tracker thật chưa hoàn thiện. Khi peer của B và tracker của A hoàn thành, bộ mô phỏng được chuyển sang dùng chúng làm mặc định (\texttt{-m peer}, \texttt{-m src.tracker}) mà không phải sửa logic mô phỏng; mọi kiểm thử và thí nghiệm trong Chương~5 đều chạy trên peer của B và tracker của A. Bản giả vẫn dùng được qua \texttt{--peer-script src/sim/stub\_peer.py} để so sánh.
 
 % ================================================================= CHƯƠNG 5
 \chapter{Kiểm thử và thực nghiệm}
 
 \section{Môi trường thực nghiệm}
 \begin{itemize}
-  \item Hệ điều hành Windows 11 và Linux, Python 3.13 / 3.14, mọi tiến trình chạy trên \texttt{127.0.0.1}.
+  \item Số liệu trong chương này đo trên Windows 11, Python 3.14.2, ngày 22/11/2026; hệ thống cũng đã được kiểm thử trên Linux (Python 3.13). Mọi tiến trình chạy trên \texttt{127.0.0.1}.
+  \item Peer là tiến trình \texttt{python -m peer} của B, tracker là \texttt{python -m src.tracker} của A (\texttt{--interval 2 --ttl 6}); mỗi node là một tiến trình hệ điều hành riêng.
   \item File dữ liệu 2 MiB sinh tất định, chia 16 chunk $\times$ 128 KiB.
   \item Upload mỗi peer giới hạn 256 KiB/s (trừ khi kịch bản ghi khác), độ trễ thêm 50 ms ở một số kịch bản.
   \item Churn sinh với \texttt{random\_seed = 42}.
@@ -655,7 +656,7 @@ Performance & Giới hạn băng thông đúng mức cấu hình; multi-seed nha
 \end{tabularx}
 \end{table}
 
-Chạy toàn bộ bằng một lệnh \texttt{py tests/e2e/run\_all.py} (15 hạng mục, gồm 59 unit test và 12 kiểm thử E2E, khoảng 2--3 phút); tất cả đều PASS.
+Chạy toàn bộ bằng một lệnh \texttt{py tests/e2e/run\_all.py} (20 hạng mục: 8 bộ unit test của A, B, C với tổng cộng 185 test, và 12 kiểm thử E2E chạy trên peer của B và tracker của A; khoảng 3 phút). Kết quả trên Windows: \textbf{20/20 PASS}; số hạng mục theo nhóm là Functional 8, Concurrency 2, Fault \& Recovery 5, Security 3, Performance 2, đều đạt mức tối thiểu của đề (8/2/2/2/1).
 
 \section{Các kịch bản thí nghiệm}
 
@@ -668,7 +669,7 @@ Chạy toàn bộ bằng một lệnh \texttt{py tests/e2e/run\_all.py} (15 hạ
 Baseline & 1 seed, 3 leecher, mạng ổn định\\
 Multi-seed & 4 seed, 3 leecher -- kiểm tra hiệu quả tải song song\\
 High churn & 1 seed + 2 leecher tĩnh; leecher động đến theo Poisson ($\lambda = 0.7$/s), sống theo Pareto (TB 8 s, $\alpha=1.8$), 50\% rời mạng do gặp sự cố\\
-Flash crowd & 8 leecher cùng tham gia trong 0.5 s, sau đó đồng loạt rời mạng\\
+Flash crowd & 8 leecher cùng tham gia trong 0.5 s ở giây thứ 2; ở giây thứ 8, khi chưa leecher nào tải xong, 6/8 leecher đồng loạt rời mạng, mỗi peer rời do sự cố với xác suất 50\%\\
 Tracker crash & Tracker bị buộc dừng ở giây thứ 3, khởi động lại ở giây thứ 8; 2 leecher tham gia trong thời gian tracker ngừng hoạt động\\
 \bottomrule
 \end{tabularx}
@@ -686,13 +687,16 @@ Tracker crash & Tracker bị buộc dừng ở giây thứ 3, khởi động l�
 \multirow{2}{*}{\textbf{Kịch bản}} & \multirow{2}{*}{\textbf{Seed}} & \multirow{2}{*}{\textbf{Leech}} & \textbf{Hoàn} & \multicolumn{2}{c}{\textbf{Thời gian tải (s)}} & \textbf{Nhân} & \textbf{Leech}\\
 \cmidrule(lr){5-6}
  & & & \textbf{tất} & \textbf{TB} & \textbf{min--max} & \textbf{bản TB} & \textbf{upload}\\\midrule
-Baseline      & 1 & 3  & 100\% & 13.1 & 12.4--13.8 & 2.40 & 44\%\\
-Multi-seed    & 4 & 3  & 100\% & 6.2  & 6.0--6.4   & 5.27 & 8\%\\
-High churn    & 1 & 12 & 50\%  & 9.4  & 5.8--13.4  & 3.62 & 72\%\\
-Flash crowd   & 1 & 9  & 100\% & 12.3 & 11.4--14.3 & 4.76 & 82\%\\
-Tracker crash & 2 & 5  & 100\% & 17.3 & 15.4--18.4 & 4.03 & 51\%\\
+Baseline      & 1 & 3  & 100\% & 11.8 & 11.7--11.8 & 2.38 & 56\%\\
+Multi-seed    & 4 & 3  & 100\% & 5.2  & 5.0--5.5   & 4.81 & 27\%\\
+High churn    & 1 & 12 & 42\%  & 12.2* & 4.7--17.9 & 3.46 & 75\%\\
+Flash crowd   & 1 & 9  & 33\%  & 12.0* & 11.4--12.7 & 2.46 & 68\%\\
+Tracker crash & 2 & 5  & 100\% & 16.1 & 15.0--18.1 & 4.00 & 60\%\\
 \bottomrule
 \end{tabular}
+
+\smallskip
+\footnotesize{* Chỉ tính leecher đã tải xong; leecher rời mạng trước khi xong được tính trong tỉ lệ hoàn tất.}
 \end{table}
 
 \begin{figure}[H]
@@ -709,16 +713,16 @@ Tracker crash & 2 & 5  & 100\% & 17.3 & 15.4--18.4 & 4.03 & 51\%\\
 \end{figure}
 
 \subsection{Baseline}
-Cả 3 leecher đều tải xong, trung bình 13.1 s. Đáng chú ý, \textbf{44\%} dữ liệu được phục vụ bởi chính các leecher chứ không phải seed. Dù seed chỉ có 256 KiB/s, các leecher trao đổi chunk cho nhau ngay khi có nên thông lượng đỉnh của cả swarm lên tới 1280 KiB/s. Kết quả này thể hiện rõ ưu điểm của mô hình P2P.
+Cả 3 leecher đều tải xong, trung bình 11.8 s. Đáng chú ý, \textbf{56\%} dữ liệu được phục vụ bởi chính các leecher chứ không phải seed. Nếu chỉ seed phục vụ, 3 $\times$ 2 MiB qua 256 KiB/s cần ít nhất 24 s; nhờ các leecher trao đổi chunk cho nhau ngay khi có, thông lượng đỉnh của cả swarm lên tới 1152 KiB/s. Kết quả này thể hiện rõ ưu điểm của mô hình P2P.
 
 \subsection{Multi-seed}
-Với 4 seed, thời gian tải giảm còn 6.2 s, \textbf{nhanh hơn 2.12 lần} so với baseline. Tốc độ không tăng đủ 4 lần vì ở baseline các leecher đã bù một phần băng thông, và mỗi chunk vẫn có một độ trễ cố định không giảm theo số seed. Tỉ lệ leecher upload giảm còn 8\% vì seed đã đủ nhanh.
+Với 4 seed, thời gian tải giảm còn 5.2 s, \textbf{nhanh hơn 2.25 lần} so với baseline. Tốc độ không tăng đủ 4 lần vì ở baseline các leecher đã bù một phần băng thông, và mỗi chunk vẫn có một độ trễ cố định không giảm theo số seed. Tỉ lệ leecher upload giảm còn 27\% vì seed đã đủ nhanh.
 
 \subsection{High churn}
-Có 12 leecher tham gia, trong đó nhiều peer bị kết thúc đột ngột. Hệ thống ghi nhận \textbf{20 lần} \texttt{peer\_lost} và \textbf{8 lần} \texttt{switch\_source}: peer phát hiện nguồn ngừng hoạt động và tự chuyển sang nguồn khác, các leecher tĩnh vẫn tải xong đúng hash. Tỉ lệ hoàn tất chỉ đạt 50\% vì theo phân phối Pareto, nhiều peer có thời gian sống rất ngắn, rời mạng trước khi kịp tải đủ; đây là hành vi phù hợp với mô hình churn, không phải lỗi của hệ thống. Do seed gốc luôn hoạt động nên mọi chunk luôn có ít nhất 1 bản sao.
+Có 12 leecher tham gia: 2 leecher tĩnh (cả 2 tải xong) và 10 leecher động (3/10 tải xong trước khi rời; 4 bị kết thúc đột ngột, 6 rời mạng chủ động). Hệ thống ghi nhận \textbf{27 lần} \texttt{peer\_lost} và \textbf{13 lần} \texttt{switch\_source}: peer phát hiện nguồn ngừng hoạt động và tự chuyển sang nguồn khác, các leecher tĩnh vẫn tải xong đúng hash. Tỉ lệ hoàn tất chỉ đạt 42\% vì thời gian sống Pareto ($\alpha = 1.8$, trung bình 8 s) có giá trị nhỏ nhất $x_m = 3.56$ s, trung vị khoảng 5.2 s và phương sai vô hạn: phần lớn peer chỉ sống 3.6--5.2 s, ngắn hơn thời gian cần để tải đủ file; đây là hành vi phù hợp với mô hình churn, không phải lỗi của hệ thống. Thời gian tải trung bình 12.2 s chỉ tính các peer đã tải xong nên không so trực tiếp với baseline được. Do seed gốc luôn hoạt động nên mọi chunk luôn có ít nhất 1 bản sao.
 
 \subsection{Flash crowd}
-Dù 8 leecher tham gia gần như đồng thời, tỉ lệ hoàn tất vẫn đạt 100\% với thời gian tải trung bình 12.3 s. Leecher phục vụ tới \textbf{82\%} dữ liệu: một seed không đủ băng thông để phục vụ toàn bộ leecher, nhưng rarest-first giúp các leecher giữ những chunk khác nhau nên có thể trao đổi cho nhau. Tracker chịu tải đỉnh 13 announce/giây.
+8 leecher tham gia gần như đồng thời ở giây thứ 2; leecher phục vụ tới \textbf{68\%} dữ liệu: một seed không đủ băng thông để phục vụ toàn bộ leecher, nhưng rarest-first giúp các leecher giữ những chunk khác nhau nên có thể trao đổi cho nhau. Ở giây thứ 8, khi chưa leecher nào tải xong, 6/8 leecher đồng loạt rời mạng; 3 leecher còn lại (2 leecher của đợt tham gia và leecher tĩnh) vẫn tải xong, trung bình 12.0 s, nên tỉ lệ hoàn tất là 33\% (3/9). Hệ thống ghi nhận 32 lần \texttt{peer\_lost} và 6 lần \texttt{switch\_source}; tracker chịu tải đỉnh 9 announce/giây.
 
 \begin{figure}[H]
 \centering
@@ -727,10 +731,10 @@ Dù 8 leecher tham gia gần như đồng thời, tỉ lệ hoàn tất vẫn đ
 \label{fig:replication}
 \end{figure}
 
-Hình~\ref{fig:replication} cho thấy số bản sao của chunk tăng nhanh sau đợt tham gia đồng loạt và giảm mạnh khi các peer rời đồng loạt. Seed gốc là điều kiện để không chunk nào biến mất hoàn toàn.
+Hình~\ref{fig:replication} cho thấy ở flash crowd, số bản sao trung bình của chunk tăng từ 1.0 lên 3.56 trong khoảng giây 1--7 nhờ leecher phục vụ lẫn nhau, rồi giảm ngay xuống 2.31 khi 6 leecher rời đồng loạt ở giây thứ 8. Số bản sao nhỏ nhất luôn $\geq 1$: seed gốc là điều kiện để không chunk nào biến mất hoàn toàn.
 
 \subsection{Tracker crash}
-Tracker ngừng hoạt động khoảng 5.1 s, trong thời gian đó có 27 lần announce thất bại. Tuy vậy, tỉ lệ hoàn tất vẫn là \textbf{100\%}: các peer đã biết nhau vẫn trao đổi chunk trực tiếp. Hai leecher tham gia trong thời gian tracker ngừng hoạt động không tìm được nguồn cho tới khi tracker hoạt động trở lại (nhờ announce thử lại với backoff). Sau khi tracker khởi động lại, swarm được đăng ký lại đầy đủ sau khoảng 1.5 s mà tracker không cần lưu bất kỳ trạng thái nào.
+Tiến trình tracker bị buộc dừng và ngừng hoạt động khoảng 5.4 s, trong thời gian đó có 14 lần announce thất bại. Tuy vậy, tỉ lệ hoàn tất vẫn là \textbf{100\%}: ngay trong lúc tracker ngừng hoạt động vẫn có 2176 KiB được trao đổi trực tiếp giữa các peer đã biết nhau, vì tracker không nằm trên đường dữ liệu. Hai leecher tham gia trong thời gian tracker ngừng hoạt động không tìm được nguồn cho tới khi tracker hoạt động trở lại (nhờ announce thử lại với backoff), sau đó vẫn tải xong. Announce thành công đầu tiên đến 0.23 s sau khi tracker khởi động lại; swarm được dựng lại từ các announce định kỳ mà tracker không cần lưu bất kỳ trạng thái nào.
 
 \begin{figure}[H]
 \centering
@@ -783,7 +787,7 @@ Lệnh \texttt{py demo/run\_demo.py} chạy khoảng 30 giây và kiểm tra đ�
 \begin{itemize}
   \item Xây dựng hoàn chỉnh hệ thống chia sẻ file P2P kiểu BitTorrent gồm tracker, peer và bộ mô phỏng; các thành phần chạy như tiến trình riêng và giao tiếp qua mạng thật.
   \item \textbf{Tính đúng:} trong mọi kịch bản, leecher báo \texttt{completed} đều có file trùng SHA-256 với file gốc; chunk sai hash luôn bị từ chối.
-  \item \textbf{Hiệu năng:} tăng khi thêm nguồn (multi-seed nhanh hơn 2.12 lần) và nhờ leecher phục vụ lại (tới 82\% dữ liệu trong flash crowd).
+  \item \textbf{Hiệu năng:} tăng khi thêm nguồn (multi-seed nhanh hơn 2.25 lần) và nhờ leecher phục vụ lại (tới 56\% dữ liệu ở baseline và 75\% ở high churn).
   \item \textbf{Chịu lỗi:} mất nguồn thì tự đổi nguồn; việc tracker ngừng hoạt động không làm gián đoạn việc trao đổi chunk; swarm tự dựng lại sau khi tracker khởi động lại.
   \item Có bộ kiểm thử tự động, pipeline thí nghiệm sinh CSV/biểu đồ và demo một lệnh.
   \item Về tổ chức làm việc nhóm: phương pháp thống nhất hợp đồng giao tiếp trước và để mỗi thành viên tự xây dựng mock giúp ba thành viên phát triển song song mà hầu như không phụ thuộc tiến độ của nhau; giai đoạn tích hợp cuối cùng chỉ cần thay đổi tham số dòng lệnh.
@@ -795,7 +799,7 @@ Lệnh \texttt{py demo/run\_demo.py} chạy khoảng 30 giây và kiểm tra đ�
   \item Tracker vẫn là thành phần tập trung: peer mới không thể tham gia khi tracker ngừng hoạt động.
   \item Chỉ giới hạn băng thông chiều upload; cơ chế choke còn đơn giản (chưa có tit-for-tat và optimistic unchoke như BitTorrent gốc).
   \item Metainfo dùng JSON thay vì bencode nên không tương thích với client BitTorrent thật.
-  \item Kết quả thời gian có dao động nhỏ giữa các lần chạy do lập lịch luồng của hệ điều hành (lịch churn thì tất định).
+  \item Kết quả thời gian có dao động nhỏ giữa các lần chạy do lập lịch luồng của hệ điều hành (lịch churn thì tất định); mỗi kịch bản mới chạy một lần, chưa có trung bình nhiều lần và khoảng tin cậy.
 \end{itemize}
 
 \section{Hướng phát triển}

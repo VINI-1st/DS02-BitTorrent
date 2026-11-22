@@ -2,9 +2,9 @@
 
 * **Bandwidth** – every peer gets ``--max-up-kbps`` (Contract 4, KiB/s). This
   works for the StubPeer *and* Role B's real peer because it is a contract flag.
-* **Latency** – ``--latency-ms`` is a StubPeer-only flag (added to every
-  handshake and piece request). For the real peer, latency is not injected
-  (Windows has no ``tc netem``); the launcher simply does not pass the flag.
+* **Latency** – ``--latency-ms`` (added to every handshake and piece request)
+  is understood by the StubPeer and by Role B's peer; it is application-level
+  latency because Windows has no ``tc netem``. Other peers do not get the flag.
 * **Tracker faults** – :class:`TrackerFaultInjector` kills the *real* tracker
   OS process at ``at_sec`` and respawns it after ``downtime_sec`` through a
   :class:`TrackerControl` object provided by the launcher.
@@ -26,7 +26,7 @@ Scenario keys (all optional)::
       #   crashes: [{at_sec: 3, downtime_sec: 2}, {at_sec: 12, downtime_sec: 2}]
     faults:
       kill_peers: [{target: seed-9002, at_sec: 3.0, mode: crash}]   # or mode: graceful
-      corrupt_peers: {seed-9003: all}                                # StubPeer only
+      corrupt_peers: {seed-9003: all}                                # StubPeer and Role B peer
 """
 
 from __future__ import annotations

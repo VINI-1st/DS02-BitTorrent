@@ -1,0 +1,14 @@
+peer_id,role,start_rel_sec,end_rel_sec,completed,download_time_sec,pieces_downloaded,bytes_downloaded,avg_download_kbps,pieces_uploaded,bytes_uploaded,uploaded_before_complete,distinct_sources,invalid_chunks,peer_lost,switch_source,announces,announce_failures,exit_code,end_reason
+seed-9001,seed,0.837,30.023,1,,0,0,0.0,38,4980736,0,0,0,0,0,15,0,0,scenario_end
+leech-9002,leech,1.274,30.023,1,16.04,16,2097152,127.68,30,3932160,19,4,0,5,0,16,0,0,scenario_end
+leech-9003,leech,1.296,29.978,1,17.893,16,2097152,114.46,30,3932160,23,4,0,5,1,16,0,0,scenario_end
+leech-9101,leech,1.312,4.434,0,,1,131072,41.0,0,0,0,1,0,0,0,3,0,130,churn_leave
+leech-9102,leech,2.56,22.169,1,16.565,16,2097152,123.63,28,3670016,21,4,0,5,3,11,0,0,churn_leave
+leech-9103,leech,7.473,11.815,0,,11,1441792,324.28,5,655360,5,4,0,0,0,4,0,130,churn_leave
+leech-9104,leech,8.025,14.175,0,,12,1572864,249.77,3,393216,3,4,0,2,2,3,0,1,churn_crash
+leech-9105,leech,10.141,13.409,0,,10,1310720,391.73,0,0,0,4,0,1,0,3,0,130,churn_leave
+leech-9106,leech,13.369,17.093,0,,10,1310720,343.73,2,262144,2,4,0,1,1,3,0,130,churn_leave
+leech-9107,leech,15.16,20.967,0,,12,1572864,264.5,5,655360,5,6,0,2,2,3,0,1,churn_crash
+leech-9108,leech,16.189,29.285,1,5.843,16,2097152,350.5,7,917504,6,6,0,3,2,7,0,1,churn_crash
+leech-9109,leech,17.42,20.836,0,,7,917504,262.29,2,262144,2,5,0,0,0,3,0,130,churn_leave
+leech-9110,leech,17.895,24.344,1,4.728,16,2097152,433.16,1,131072,1,7,0,3,2,4,0,1,churn_crash

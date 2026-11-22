@@ -1,6 +1,6 @@
 # C6 – Kịch bản 4: Flash crowd – 8 leecher ập vào cùng lúc rồi rời đồng loạt
 name: "flash_crowd"
-description: "1 seed + 1 leecher tĩnh; 8 leecher ập vào trong 0.5s ở giây 2; rời đồng loạt ở giây 16 (50% crash)"
+description: "1 seed + 1 leecher tĩnh; 8 leecher ập vào trong 0.5s ở giây 2; 75% trong số đó rời đồng loạt ở giây 8, lúc swarm còn đang tải (50% crash)"
 
 tracker:
   host: "127.0.0.1"
@@ -24,8 +24,8 @@ churn:
   burst_time_sec: 2.0
   burst_size: 8
   burst_window_sec: 0.5
-  mass_depart_time_sec: 16.0
-  depart_fraction: 1.0
+  mass_depart_time_sec: 8.0     # trước khi ai tải xong (~14 s) -> đo được tác động của việc rời đồng loạt
+  depart_fraction: 0.75         # 6/8 leecher rời, 2 ở lại cùng leecher tĩnh và seed
   crash_prob: 0.5
   port_offset: 100
 

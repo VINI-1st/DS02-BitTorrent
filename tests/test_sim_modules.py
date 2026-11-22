@@ -29,8 +29,8 @@ from src.sim.common import (  # noqa: E402
     validate_event,
     write_deterministic_file,
 )
-from src.sim.launcher import load_scenario, validate_scenario  # noqa: E402
-from src.sim.metrics import analyze  # noqa: E402
+from src.sim.launcher import LaunchOptions, ScenarioRunner, load_scenario, validate_scenario  # noqa: E402
+from src.sim.metrics import analyze, write_summary_table  # noqa: E402
 from src.sim.netem import NetworkEmulator  # noqa: E402
 from src.sim.procutil import Entrypoint, child_env, find_free_port, graceful_stop, spawn, wait_for_port  # noqa: E402
 from src.sim.stub_peer import decode_bitfield, encode_bitfield, parse_corrupt_spec  # noqa: E402
@@ -250,6 +250,47 @@ class TestMetrics(unittest.TestCase):
         peers = {p["peer_id"]: p for p in analyze(self._log())["peers"]}
         self.assertEqual(peers["leech-3"]["exit_code"], -9)
         self.assertEqual(peers["leech-2"]["uploaded_before_complete"], 1)
+
+
+    def test_tracker_side_requests_counted(self):
+        log = self._log()
+        # Role A's tracker logs http_request with the request line at top level (launcher sets peer_id "tracker")
+        log.insert(5, {"ts": 1000.25, "peer_id": "tracker", "event": "http_request", "chunk_index": None, "meta": {},
+                       "client": "127.0.0.1", "request": "GET /announce?info_hash=ab&peer_id=seed-1 HTTP/1.1"})
+        log.insert(6, {"ts": 1000.26, "peer_id": "tracker", "event": "http_request", "chunk_index": None, "meta": {},
+                       "request": "GET /scrape HTTP/1.1"})
+        res = analyze(log)
+        self.assertEqual(res["summary"]["total_tracker_http_requests"], 1)  # scrape is not an announce
+        self.assertEqual(res["timeseries"][0]["tracker_http_requests"], 1)
+        self.assertEqual(res["summary"]["total_tracker_announces"], 3)  # peer-side count unchanged
+        self.assertEqual(res["summary"]["total_leechers"], 2)  # tracker is never counted as a peer
+
+    def test_summary_table_accepts_new_columns(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "summary.csv"
+            write_summary_table([{"scenario": "old", "a": 1}, {"scenario": "new", "a": 2, "b": 3}], out)
+            lines = out.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(lines[0], "scenario,a,b")
+            self.assertEqual(lines[1], "old,1,")
+
+
+class TestLauncherTrackerArgs(unittest.TestCase):
+    def _argv(self, tracker: str, extra: str = "") -> list[str]:
+        cfg = load_scenario(REPO / "scenarios" / "baseline.yaml")
+        with tempfile.TemporaryDirectory() as d:
+            r = ScenarioRunner(cfg, LaunchOptions(tracker=tracker, tracker_extra_args=extra, work_root=Path(d), logs_root=Path(d)))
+            return r._tracker_argv()
+
+    def test_role_a_tracker_gets_scenario_interval_and_ttl(self):
+        argv = self._argv("-m src.tracker")
+        self.assertEqual(argv[argv.index("--interval") + 1], "2")
+        self.assertEqual(argv[argv.index("--ttl") + 1], "6")
+        self.assertNotIn("--stop-file", argv)
+
+    def test_stub_tracker_gets_stop_file_and_extra_args_last(self):
+        argv = self._argv("src/sim/stub_tracker.py", "--interval 5")
+        self.assertIn("--stop-file", argv)
+        self.assertEqual(argv[-2:], ["--interval", "5"])  # argparse keeps the last value
 
 
 class TestStubProcesses(unittest.TestCase):

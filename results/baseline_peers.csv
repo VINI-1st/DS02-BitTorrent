@@ -1,0 +1,5 @@
+peer_id,role,start_rel_sec,end_rel_sec,completed,download_time_sec,pieces_downloaded,bytes_downloaded,avg_download_kbps,pieces_uploaded,bytes_uploaded,uploaded_before_complete,distinct_sources,invalid_chunks,peer_lost,switch_source,announces,announce_failures,exit_code,end_reason
+seed-9001,seed,0.667,13.703,1,,0,0,0.0,21,2752512,0,0,0,0,0,8,0,0,scenario_end
+leech-9002,leech,1.098,13.673,1,11.812,16,2097152,173.38,9,1179648,9,3,0,0,0,8,0,0,scenario_end
+leech-9003,leech,1.11,13.735,1,11.662,16,2097152,175.61,9,1179648,7,3,0,0,0,8,0,0,scenario_end
+leech-9004,leech,1.132,13.752,1,11.843,16,2097152,172.93,9,1179648,9,3,0,0,0,8,0,0,scenario_end

@@ -9,19 +9,18 @@ What it does
     2. generates a deterministic source file and a Contract 1 metainfo
        (built-in, byte-compatible with Role B) – or calls Role B's
        ``make-torrent`` when ``--make-torrent-script`` is given,
-    3. starts the tracker (StubTracker by default, Role A's with ``--tracker-script``),
-    4. starts the seeds and leechers (StubPeer by default, Role B's with
-       ``--peer-script``) using only the Contract 4 CLI,
+    3. starts the tracker (Role A's ``-m src.tracker`` by default, StubTracker with ``--tracker-script``),
+    4. starts the seeds and leechers (Role B's ``-m peer`` by default, StubPeer with
+       ``--peer-script src/sim/stub_peer.py``) using only the Contract 4 CLI,
     5. runs the churn schedule (C2) and the network / fault plan (C3),
     6. merges every stdout line into ``logs/<scenario>/events.jsonl`` (Contract 5),
     7. stops everything cleanly (graceful first, kill after a timeout) and writes
        ``logs/<scenario>/processes.json`` with every exit code.
 
-Swapping in the real implementations needs no code change::
+Running C's stand-ins instead needs no code change::
 
     py src/sim/launcher.py --scenario scenarios/baseline.yaml ^
-        --peer-script "-m peer" --tracker-script "-m tracker" ^
-        --make-torrent-script "-m torrent.make_torrent"
+        --peer-script src/sim/stub_peer.py --tracker-script src/sim/stub_tracker.py
 """
 
 from __future__ import annotations
@@ -69,8 +68,12 @@ from src.sim.procutil import (  # noqa: E402
     wait_for_port,
 )
 
-DEFAULT_PEER = "src/sim/stub_peer.py"
-DEFAULT_TRACKER = "src/sim/stub_tracker.py"
+# Real implementations by default (work-division.md §5: "khi peer thật (B7) sẵn sàng thì đổi lệnh khởi động").
+# The stand-ins stay available: --peer-script src/sim/stub_peer.py --tracker-script src/sim/stub_tracker.py
+DEFAULT_PEER = "-m peer"  # Role B, src/peer
+DEFAULT_TRACKER = "-m src.tracker"  # Role A, src/tracker
+STUB_PEER = "src/sim/stub_peer.py"
+STUB_TRACKER = "src/sim/stub_tracker.py"
 DEFAULT_WORK_ROOT = Path(tempfile.gettempdir()) / "ds02-sim"
 DEFAULT_LOGS_ROOT = REPO_ROOT / "logs"
 
@@ -128,7 +131,7 @@ class LaunchOptions:
     tracker_extra_args: str = ""
     peer_extra_args: str = ""
     make_torrent: str | None = None
-    sim_flags: str = "auto"  # auto | on | off  (stub-only flags such as --latency-ms)
+    sim_flags: str = "auto"  # auto | on | off  (--latency-ms / --corrupt-pieces: StubPeer and Role B peer)
     keep_dirs: bool = False
     work_root: Path = DEFAULT_WORK_ROOT
     logs_root: Path = DEFAULT_LOGS_ROOT
@@ -196,7 +199,7 @@ class ScenarioRunner:
         self.name = str(self.cfg["name"])
         self.peer_ep = Entrypoint.parse(self.opt.peer)
         self.tracker_ep = Entrypoint.parse(self.opt.tracker) if self.opt.tracker else None
-        self.sim_flags = {"on": True, "off": False}.get(self.opt.sim_flags, self.peer_ep.is_stub_peer)
+        self.sim_flags = {"on": True, "off": False}.get(self.opt.sim_flags, self.peer_ep.supports_sim_flags)
 
         swarm = self.cfg.get("swarm", {}) or {}
         sim = self.cfg.get("simulation", {}) or {}
@@ -255,7 +258,8 @@ class ScenarioRunner:
                     pass
         if record.get("event") == "completed":
             node = (record.get("meta") or {}).get("node") or record.get("peer_id")
-            self.completed.add(str(node))
+            with self._proc_lock:  # written by every reader thread, read by _all_done()
+                self.completed.add(str(node))
         if self.opt.on_event:
             try:
                 self.opt.on_event(record)
@@ -354,9 +358,19 @@ class ScenarioRunner:
     # tracker supervisor (TrackerControl protocol used by netem.TrackerFaultInjector)
     def _tracker_argv(self) -> list[str]:
         assert self.tracker_ep is not None
-        argv = self.tracker_ep.argv() + ["--host", self.tracker_host, "--port", str(self.tracker_port)]
+        # --interval/--ttl are understood by both the StubTracker and Role A's tracker
+        # (src/tracker/__main__.py). Role A defaults to interval=30, ttl=90 which is far
+        # too long for 20-60 s scenarios, so the scenario value is always passed.
+        # --tracker-args comes last: argparse keeps the last occurrence, so it still overrides.
+        argv = self.tracker_ep.argv() + [
+            "--host", self.tracker_host,
+            "--port", str(self.tracker_port),
+            "--interval", str(self.tracker_interval),
+        ]
         if self.tracker_ep.is_stub_tracker:
-            argv += ["--interval", str(self.tracker_interval), "--stop-file", str(self.tracker_dir / STOP_FILE_NAME)]
+            argv += ["--stop-file", str(self.tracker_dir / STOP_FILE_NAME)]
+        else:
+            argv += ["--ttl", str(3 * self.tracker_interval)]
         argv += split_args(self.opt.tracker_extra_args)
         return argv
 
@@ -520,9 +534,10 @@ class ScenarioRunner:
             if self.pending_actions > 0:
                 return False
             leeches = [i for i in self.procs.values() if i.role == "leech"]
+            done = set(self.completed)
         if not leeches:
             return False
-        return all(i.node in self.completed or i.proc.poll() is not None for i in leeches)
+        return all(i.node in done or i.proc.poll() is not None for i in leeches)
 
     # ------------------------------------------------------------------ main
     def run(self) -> RunResult:
@@ -652,7 +667,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="DS02 scenario orchestrator (C1 + C2 churn + C3 netem)")
     p.add_argument("--scenario", default="scenarios/baseline.yaml", help="scenario YAML")
     p.add_argument("--peer-script", default=DEFAULT_PEER, help='peer entrypoint: script path or "-m peer" (Role B)')
-    p.add_argument("--tracker-script", default=DEFAULT_TRACKER, help='tracker entrypoint: script path or "-m tracker" (Role A)')
+    p.add_argument("--tracker-script", default=DEFAULT_TRACKER, help='tracker entrypoint: script path or "-m src.tracker" (Role A)')
     p.add_argument("--no-tracker", action="store_true", help="do not start a tracker (one is already running)")
     p.add_argument("--tracker-args", default="", help="extra args appended to the tracker command")
     p.add_argument("--peer-args", default="", help="extra args appended to every peer command")
@@ -687,6 +702,10 @@ def main(argv: list[str] | None = None) -> int:
         f"=== [launcher] done in {res.duration_sec}s | completed {len(res.completed_nodes)} | log: {res.log_path} ===",
         file=sys.stderr,
     )
+    leechers = [p for p in res.processes if p["role"] == "leech"]
+    if leechers and not res.completed_nodes:
+        print("=== [launcher] FAIL: no leecher completed – see logs/<scenario>/stderr/ ===", file=sys.stderr)
+        return 1
     return 0
 
 
