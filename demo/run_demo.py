@@ -1,7 +1,7 @@
 """C7 – Single-command live demo with a real-time terminal dashboard.
 
-    py demo/run_demo.py                       # StubPeer + StubTracker
-    py demo/run_demo.py --peer-script "-m peer" --tracker-script "-m tracker"   # real A + B
+    py demo/run_demo.py                       # Role B peer + Role A tracker
+    py demo/run_demo.py --peer-script src/sim/stub_peer.py --tracker-script src/sim/stub_tracker.py   # C's stand-ins
 
 The demo runs ``scenarios/demo_live.yaml`` through the normal launcher (C1) and
 redraws a dashboard from the live Contract 5 event stream. Every checklist item
@@ -104,8 +104,10 @@ class Dashboard:
                 elif ev in ("fault_kill_peer", "churn_crash"):
                     self.status[target] = "CRASHED"
                     self._say(f"FAULT: {target} killed ({meta.get('mode', 'crash')})")
-                    if self.roles.get(target) == "seed":
-                        self._tick("stop_source", f"{target} killed while leechers were downloading")
+                    downloading = [p for p, r in self.roles.items() if r == "leech" and p not in self.completed_sha
+                                   and self.status.get(p) == "DOWNLOADING"]
+                    if self.roles.get(target) == "seed" and downloading:
+                        self._tick("stop_source", f"{target} killed while {len(downloading)} leecher(s) were downloading")
                 elif ev == "churn_leave":
                     self.status[target] = "LEAVING"
                 elif ev == "process_exit" and target in self.roles:
@@ -228,12 +230,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--refresh", type=float, default=0.3, help="dashboard refresh period (s)")
     p.add_argument("--no-clear", action="store_true", help="do not clear the screen (logs / CI)")
     p.add_argument("--no-color", action="store_true")
+    p.add_argument("--logs-root", default=None, help="where logs/<scenario>/ is written (e.g. %%TEMP%%\\ds02-logs to avoid OneDrive locks)")
     args = p.parse_args(argv)
 
     interactive = sys.stdout.isatty() and not args.no_clear
     enable_ansi()
     dash = Dashboard(color=not args.no_color and sys.stdout.isatty())
     opts = LaunchOptions(peer=args.peer_script, tracker=args.tracker_script, tracker_extra_args=args.tracker_args, keep_dirs=True, echo=False, on_event=dash.on_event)
+    if args.logs_root:
+        opts.logs_root = Path(args.logs_root)
     runner = ScenarioRunner(args.scenario, opts)
     holder: dict[str, RunResult | BaseException] = {}
 
@@ -258,7 +263,13 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\n[demo] interrupted – stopping all peers ...", flush=True)
         runner.stop_event.set()
-        t.join(15)
+        # shutdown() stops every peer gracefully (<= 6 s), the tracker (<= 3 s) and joins the readers;
+        # wait long enough so that no child process outlives the demo.
+        t.join(40)
+        if t.is_alive():
+            print("[demo] shutdown still running – check for leftover python processes", file=sys.stderr)
+        if "result" not in holder:
+            return 130
 
     if "error" in holder:
         print(f"[demo] scenario failed: {holder['error']}", file=sys.stderr)

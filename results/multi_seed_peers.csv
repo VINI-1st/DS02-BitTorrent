@@ -1,0 +1,8 @@
+peer_id,role,start_rel_sec,end_rel_sec,completed,download_time_sec,pieces_downloaded,bytes_downloaded,avg_download_kbps,pieces_uploaded,bytes_uploaded,uploaded_before_complete,distinct_sources,invalid_chunks,peer_lost,switch_source,announces,announce_failures,exit_code,end_reason
+seed-9001,seed,0.938,7.643,1,,0,0,0.0,10,1310720,0,0,0,0,0,5,0,0,scenario_end
+seed-9002,seed,0.934,7.643,1,,0,0,0.0,8,1048576,0,0,0,0,0,5,0,0,scenario_end
+seed-9003,seed,1.007,7.55,1,,0,0,0.0,10,1310720,0,0,0,0,0,5,0,0,scenario_end
+seed-9004,seed,1.037,7.581,1,,0,0,0.0,9,1179648,0,0,0,0,0,5,0,0,scenario_end
+leech-9005,leech,1.332,7.548,1,5.474,16,2097152,374.13,6,786432,6,6,0,0,0,5,0,0,scenario_end
+leech-9006,leech,1.385,7.596,1,5.047,16,2097152,405.79,2,262144,1,6,0,0,0,5,0,0,scenario_end
+leech-9007,leech,1.377,7.644,1,5.168,16,2097152,396.28,6,786432,5,6,0,0,0,5,0,0,scenario_end

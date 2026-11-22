@@ -55,6 +55,7 @@ Một tiến trình bị **kill** (crash) sẽ không ghi được `stopped` –
 | `churn_join`, `churn_leave`, `churn_crash` | `simulator` | Hành động của engine churn (C2): `target`, `cause` |
 | `fault_kill_peer` | `simulator` | Dừng một peer theo `faults.kill_peers`: `target`, `mode` |
 | `tracker_crashed`, `tracker_restarted` | `tracker` (do launcher ghi) | Fault injection C3: tracker bị kill / được bật lại |
+| `http_request`, `peers_expired` | tracker của A | Một request HTTP (`request = "GET /announce?..."`) / peer bị xóa vì hết TTL. `metrics.py` đếm `http_request` tới `/announce` thành cột `tracker_http_requests` (tải tracker đo phía server) |
 
 Nếu peer thật dùng `peer_id` khác tên node của launcher (ví dụ ID 20 ký tự), launcher tự thêm `meta.node = "<seed|leech>-<port>"`
 vào mọi dòng của tiến trình đó, nên A/B **không phải** làm gì thêm.
@@ -90,10 +91,11 @@ Tự kiểm tra một file log: `py -c "from src.sim.common import read_jsonl, v
 
 | Hạng mục | Peer (B, Hợp đồng 4) | Tracker (A, Hợp đồng 2) |
 | --- | --- | --- |
-| Lệnh khởi động | `<peer> --torrent P --port N --dir D --role seed\|leech --peer-id ID --max-up-kbps K [--exit-on-complete]` | `<tracker> --host H --port N` |
+| Lệnh khởi động | `<peer> --torrent P --port N --dir D --role seed\|leech --peer-id ID --max-up-kbps K [--exit-on-complete]` | `<tracker> --host H --port N --interval S --ttl 3S` (S = `tracker.interval_sec`) |
 | Seed | đọc `D/<info.name>` (launcher đã chép file gốc vào) | – |
 | Dừng đàng hoàng | bắt **SIGINT, SIGTERM và SIGBREAK** (Windows), announce `stopped`, log `stopped`, thoát | tương tự |
 | Mã thoát | 0 / 1 / 2 / 3 / 130 theo Hợp đồng 4 | 0 khi dừng bình thường |
+| `--peer-id` | launcher truyền tên node `seed-<port>` / `leech-<port>` (9–10 ký tự). Hợp đồng 4 ghi "ID 20 ký tự" và handshake (Hợp đồng 3) cần 20 byte: peer của B pad bằng byte NUL tới 20 byte khi handshake (`src/peer/wire.py::wire_peer_id`) và giữ nguyên `--peer-id` trong log | – |
 | Ghi log | Hợp đồng 5 ra stdout | Hợp đồng 5 ra stdout (`started`, `stopped`) |
 
 > **Windows:** launcher tạo mỗi tiến trình trong process group riêng và gửi `CTRL_BREAK_EVENT` để dừng đàng hoàng.
@@ -113,7 +115,7 @@ Kiểm tra cú pháp: `src/sim/launcher.py::validate_scenario` (chạy trong uni
 | `name` | string | tên file | Tên kịch bản → `logs/<name>/`, `results/<name>_*.csv` |
 | `description` | string | – | Mô tả cho người đọc |
 | `tracker.host`, `tracker.port` | string, int | `127.0.0.1`, `8000` | Địa chỉ tracker (cổng bận → tự chọn cổng trống) |
-| `tracker.interval_sec` | int | 2 | Chu kỳ announce (chỉ StubTracker) |
+| `tracker.interval_sec` | int | 2 | Chu kỳ announce; launcher truyền `--interval` cho cả StubTracker lẫn tracker của A (và `--ttl` = 3 × interval cho tracker của A) |
 | `torrent.file_name` | string | `sample_data.bin` | Tên file chia sẻ (`info.name`) |
 | `torrent.file_size_bytes` | int | 1048576 | Kích thước file, sinh tất định |
 | `torrent.piece_length` | int | 262144 | Kích thước chunk |
@@ -138,12 +140,12 @@ Kiểm tra cú pháp: `src/sim/launcher.py::validate_scenario` (chạy trong uni
 | `churn.mass_depart_time_sec`, `depart_fraction` | float, 0..1 | –, 1.0 | Rời đồng loạt |
 | `churn.mass_departure` | map | – | Chế độ poisson: `{at_sec, fraction, crash_prob}` |
 | `netem.default_max_up_kbps` | int | `swarm.max_up_kbps` | Băng thông mặc định |
-| `netem.latency_ms` | int | 0 | Độ trễ thêm (chỉ StubPeer: `--latency-ms`) |
+| `netem.latency_ms` | int | 0 | Độ trễ thêm ở tầng ứng dụng (`--latency-ms`; peer của B và StubPeer) |
 | `netem.role_profiles` | map | – | `{seed: {max_up_kbps: 128}, leech: {...}}` |
 | `netem.peer_profiles` | map | – | `{seed-9002: {max_up_kbps: 32, latency_ms: 150}}` |
 | `netem.tracker_fault` | map | – | `{enabled, crash_at_sec, downtime_sec}` hoặc `{enabled, crashes: [{at_sec, downtime_sec}, …]}` |
 | `faults.kill_peers` | list | [] | `[{target: seed-9002, at_sec: 4.0, mode: crash\|graceful}]` |
-| `faults.corrupt_peers` | map | {} | `{seed-9003: "all" \| "0,3"}` – peer gửi chunk sai (chỉ StubPeer) |
+| `faults.corrupt_peers` | map | {} | `{seed-9003: "all" \| "0,3"}` – peer gửi chunk sai (`--corrupt-pieces`; peer của B và StubPeer) |
 | `simulation.duration_sec` | float | 20 | Thời lượng tối đa |
 | `simulation.random_seed` | int | 42 | Seed của churn – cùng seed ⇒ cùng lịch |
 | `simulation.stop_when_complete` | bool | true | Dừng sớm khi mọi leecher đã xong/thoát và không còn sự kiện chờ |

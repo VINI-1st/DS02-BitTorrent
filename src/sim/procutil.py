@@ -70,6 +70,11 @@ class Entrypoint:
         return self.target.replace("\\", "/").endswith("stub_peer.py") or self.target.endswith("stub_peer")
 
     @property
+    def supports_sim_flags(self) -> bool:
+        """StubPeer and Role B's peer (``-m peer``) both accept --latency-ms / --corrupt-pieces."""
+        return self.is_stub_peer or (self.kind == "module" and self.target in ("peer", "src.peer"))
+
+    @property
     def is_stub_tracker(self) -> bool:
         return self.target.replace("\\", "/").endswith("stub_tracker.py") or self.target.endswith("stub_tracker")
 

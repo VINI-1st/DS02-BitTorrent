@@ -83,7 +83,7 @@ của OneDrive; thêm `--keep-dirs` để giữ lại.
 | `baseline.yaml` | 1 seed, 3 leecher, mạng ổn định |
 | `multi_seed.yaml` | 4 seed, 3 leecher – tải song song |
 | `high_churn.yaml` | Poisson (λ=0.7/s) + thời gian sống Pareto + 50% crash |
-| `flash_crowd.yaml` | 8 leecher ập vào trong 0.5 s, rời đồng loạt |
+| `flash_crowd.yaml` | 8 leecher ập vào trong 0.5 s ở giây 2; 75% rời đồng loạt ở giây 8 khi swarm còn đang tải |
 | `tracker_crash.yaml` | tracker bị kill ở giây 3, bật lại ở giây 8; 2 leecher đến lúc tracker đang sập |
 | `demo_live.yaml` | kịch bản trình diễn 7 tình huống bắt buộc |
 
@@ -97,15 +97,21 @@ py src/sim/metrics.py --scenario baseline      # đọc logs/baseline/events.jso
 
 CSV chứa đủ 5 nhóm số liệu: thời gian tải từng peer (`download_time_sec`), thông lượng theo thời gian (`download_kbps`, `upload_kbps`, KiB/s),
 hệ số nhân bản chunk (`avg_chunk_replication`, `chunk_<i>_replicas`), tỉ lệ hoàn tất (`completion_ratio_pct`) và tải tracker
-(`tracker_announces`, `tracker_announces_failed` mỗi giây, tổng trong `_summary.csv`).
+(`tracker_announces`, `tracker_announces_failed` mỗi giây đo phía peer; `tracker_http_requests` đo phía server khi tracker ghi log
+request – tracker của A ghi `http_request`; tổng trong `_summary.csv`). `tracker_recovery_sec` = thời gian từ lúc tracker bật lại
+tới announce thành công **đầu tiên**. Thời gian tải trung bình chỉ tính leecher đã tải xong.
 
 ### 4.3 Kiểm thử toàn hệ thống (C5) – một lệnh
 
 ```bash
-py tests/e2e/run_all.py           # 15 hạng mục (59 unit test + 12 kiểm thử E2E), ~2–3 phút, in bảng PASS/FAIL
-py tests/e2e/run_all.py --quick   # bỏ 5 kịch bản dài, ~40 s
-py -m pytest -q                   # chỉ các unit test (Role B + Role C)
+py tests/e2e/run_all.py           # 20 hạng mục (8 bộ unit test của A, B, C + 12 kiểm thử E2E với peer B + tracker A), ~3 phút
+py tests/e2e/run_all.py --quick   # bỏ 6 hạng mục dài, ~50 s – KHÔNG dùng khi chấm vì mất cả 2 test Concurrency
+py -m pytest -q tests/test_sim_modules.py tests/test_metainfo.py tests/test_storage.py tests/test_piece_picker.py tests/test_peer.py tests/test_tracker.py tests/test_protocol.py tests/test_trackerclient.py
 ```
+
+Cuối bảng kết quả có dòng đếm theo nhóm so với mức tối thiểu của đề (Functional 8 · Concurrency 2 · Fault & Recovery 2 ·
+Security 2 · Performance 1). `tests/test_network.py` (A5) chưa nằm trong bộ chạy chung vì `test_send_have` lỗi và
+`test_inbound_limit` bị treo – đã báo A trong `docs/issues-from-C.md`.
 
 Bao phủ mục 9 của đề: **Functional** (hợp đồng CLI/mã thoát, so SHA-256 + SHA-1 từng chunk với file gốc), **Concurrency** (high churn, flash crowd),
 **Fault & Recovery** (kill nguồn → `peer_lost` → `switch_source`, graceful vs crash, tracker crash + respawn),
@@ -118,6 +124,9 @@ py src/sim/run_experiments.py                           # 5 kịch bản → CSV
 py src/sim/run_experiments.py --only baseline multi_seed
 py src/sim/report.py                                    # chỉ vẽ lại biểu đồ/báo cáo từ CSV có sẵn
 ```
+
+Dòng đầu của `analysis.md` ghi peer, tracker và máy đã chạy. Số liệu hiện có đo bằng **peer của B + tracker của A**;
+trước khi nộp hãy chạy lại trên máy Windows của nhóm: `py src/sim/run_experiments.py`.
 
 Kết quả: `results/summary_metrics.csv`, `results/charts/exp1…exp6*.png`, và **`results/analysis.md`** (báo cáo tiếng Việt có số liệu cụ thể và kết luận
 cho từng kịch bản – dùng trực tiếp cho chương "Thí nghiệm và đánh giá").
@@ -132,60 +141,49 @@ Dashboard trên terminal hiển thị số peer đang hoạt động, vai trò, 
 sự kiện gần nhất và **danh sách 7 tình huống bắt buộc (mục 6.4)** – mỗi mục chỉ được đánh dấu khi sự kiện thật xảy ra:
 tạo metadata & chia sẻ, tải song song từ ≥ 2 peer, leecher upload trước khi tải xong, dừng một nguồn giữa chừng, tự chuyển nguồn,
 phát hiện & từ chối chunk sai hash, ghép file & xác minh hash. Demo kết thúc sau ~30 s với `RESULT: 7/7` (mã thoát 0).
-Tùy chọn: `--no-clear` (in theo khối, dùng khi quay màn hình/CI), `--no-color`.
+Tùy chọn: `--no-clear` (in theo khối, dùng khi quay màn hình/CI), `--no-color`, `--logs-root %TEMP%\ds02-logs`
+(ghi log ra ngoài thư mục OneDrive để tránh bị khóa file). Checklist trước khi demo: `deploy/preflight.ps1`.
 
-## 5. Hướng dẫn tích hợp cho A và B
+## 5. Tích hợp A + B + C (mặc định)
 
-Mọi công cụ của C nhận **entrypoint** là đường dẫn script (`src/sim/stub_peer.py`) hoặc module (`"-m peer"`). Khi chạy, `src/` và thư mục gốc
-được thêm vào `PYTHONPATH` của tiến trình con, nên `-m peer`, `-m tracker`, `-m torrent.make_torrent` chạy được ngay. **Không cần sửa mã của C.**
+Từ 2026-11-22 mọi công cụ của C **mặc định chạy peer của B và tracker của A**:
 
-### 5.1 B – thay StubPeer bằng peer thật
+| Công cụ | Peer mặc định | Tracker mặc định |
+| --- | --- | --- |
+| `src/sim/launcher.py`, `tests/e2e/run_all.py`, `src/sim/run_experiments.py`, `demo/run_demo.py` | `-m peer` (B, `src/peer/`) | `-m src.tracker` (A, `src/tracker/`) |
 
-Peer của B phải đáp ứng đúng Hợp đồng 4 (launcher gọi):
+Kết quả tích hợp (2026-11-22, `main` + bản sửa của C): `run_all.py` **20/20 PASS**, demo **7/7**, 5 thí nghiệm trong `results/`
+đều đo bằng peer của B (`started.meta.implementation = "peer-b"`).
+
+Mọi công cụ nhận **entrypoint** là đường dẫn script hoặc module (`"-m peer"`). `src/` và thư mục gốc được thêm vào `PYTHONPATH` của
+tiến trình con, nên `-m peer`, `-m src.tracker`, `-m torrent.make_torrent` chạy được ngay.
+
+### 5.1 Peer của B (Hợp đồng 4)
 
 ```
 py -m peer --torrent <path> --port <int> --dir <path> --role seed|leech --peer-id <seed|leech-PORT> --max-up-kbps <int> [--exit-on-complete]
 ```
 
-- seed đọc file `DIR/<info.name>` (launcher đã chép file gốc vào); leech ghi file hoàn chỉnh vào `DIR/<info.name>`;
-- in log Hợp đồng 5 ra stdout (`docs/log-and-scenario-spec.md`, mục 1.6 có hàm mẫu 3 dòng);
-- bắt `SIGINT`, `SIGTERM` **và `SIGBREAK` (Windows)** để announce `stopped`, log `stopped` rồi thoát;
-- mã thoát `0/1/2/3/130` như hợp đồng.
+Seed đọc `DIR/<info.name>` (launcher chép file gốc vào), leech ghi vào đó; log Hợp đồng 5 ra stdout; bắt `SIGINT`, `SIGTERM`, `SIGBREAK`
+và file `.sim_stop`; mã thoát `0/1/2/3/130`. Peer-id được pad tới 20 byte cho handshake 68 byte của A (`src/peer/wire.py::wire_peer_id`).
+Launcher truyền thêm `--latency-ms` và `--corrupt-pieces` cho peer của B và StubPeer (`Entrypoint.supports_sim_flags`; ép bằng `--sim-flags on|off`).
+
+### 5.2 Tracker của A (Hợp đồng 2)
+
+Tracker chạy bằng `py -m src.tracker --host H --port N --interval S --ttl S`. Mặc định của A là `interval=30, ttl=90`, quá dài cho kịch bản
+vài chục giây, nên launcher **tự truyền** `--interval <tracker.interval_sec>` và `--ttl <3 × interval>`. `--tracker-args` vẫn ghi đè được
+(đặt sau cùng, argparse lấy giá trị cuối). `--no-tracker` khi tracker đã chạy sẵn ở `tracker.host:port`.
+
+Tracker của A ghi `tracker_started` / `tracker_stopped`; launcher đổi thành `started` / `stopped` (giữ tên gốc trong `meta.original_event`)
+và đếm `http_request` tới `/announce` thành `tracker_http_requests`. Kịch bản `tracker_crash` **kill thật** tiến trình tracker rồi bật lại
+– phép thử A3 (swarm tự dựng lại từ announce).
+
+### 5.3 Chạy bằng bản giả của C (để so sánh hoặc khi A/B đang sửa)
 
 ```bash
-py src/sim/launcher.py --scenario scenarios/baseline.yaml --peer-script "-m peer"
-py src/sim/launcher.py --scenario scenarios/baseline.yaml --peer-script "-m peer" --make-torrent-script "-m torrent.make_torrent"
-py tests/e2e/run_all.py --peer-script "-m peer"
-py src/sim/run_experiments.py --peer-script "-m peer"
-py demo/run_demo.py --peer-script "-m peer"
-```
-
-Các cờ chỉ dành cho StubPeer (`--latency-ms`, `--corrupt-pieces`) **không** được truyền cho peer thật (tự nhận diện; ép bằng `--sim-flags on|off`).
-Vì vậy với peer thật, các kiểm thử dựa vào chunk hỏng sẽ chỉ đạt khi B có cơ chế tương đương; độ trễ chỉ được mô phỏng với StubPeer.
-
-### 5.2 A – dùng tracker thật (`src/tracker`, đã có trên `main`)
-
-Tracker của A chạy bằng `py -m src.tracker --host H --port N --interval S --ttl S`. Mặc định `interval=30`, quá dài cho kịch bản
-vài chục giây, nên luôn truyền `--tracker-args "--interval 2 --ttl 6"`:
-
-```bash
-py src/sim/launcher.py --scenario scenarios/tracker_crash.yaml --tracker-script "-m src.tracker" --tracker-args "--interval 2 --ttl 6"
-py src/sim/run_experiments.py --tracker-script "-m src.tracker" --tracker-args "--interval 2 --ttl 6"
-py tests/e2e/run_all.py --tracker-script "-m src.tracker" --tracker-args "--interval 2 --ttl 6"
-py src/sim/launcher.py --scenario scenarios/baseline.yaml --no-tracker     # tracker đã chạy sẵn ở tracker.host:port
-```
-
-Đã kiểm tra với tracker của A: `baseline` và `tracker_crash` đạt 100%, tracker bị kill thật rồi bật lại, swarm đăng ký lại sau ~0.01 s.
-Tracker của A ghi `tracker_started` / `tracker_stopped`; launcher tự đổi thành `started` / `stopped` (Hợp đồng 5, giữ tên gốc trong
-`meta.original_event`) và chấp nhận thêm `http_request`, `peers_expired`.
-
-Kịch bản `tracker_crash` sẽ **kill thật** tiến trình tracker của A rồi bật lại – đây là phép thử của A3 (swarm tự dựng lại từ announce).
-
-### 5.3 Cả hai cùng lúc
-
-```bash
-py tests/e2e/run_all.py --peer-script "-m peer" --tracker-script "-m src.tracker" --tracker-args "--interval 2 --ttl 6"
-py src/sim/run_experiments.py --peer-script "-m peer" --tracker-script "-m src.tracker" --tracker-args "--interval 2 --ttl 6" --make-torrent-script "-m torrent.make_torrent"
+py tests/e2e/run_all.py --peer-script src/sim/stub_peer.py --tracker-script src/sim/stub_tracker.py
+py src/sim/run_experiments.py --peer-script src/sim/stub_peer.py --tracker-script src/sim/stub_tracker.py --results results/stub
+py demo/run_demo.py --peer-script src/sim/stub_peer.py --tracker-script src/sim/stub_tracker.py
 ```
 
 ## 6. Cấu trúc thư mục
@@ -193,6 +191,10 @@ py src/sim/run_experiments.py --peer-script "-m peer" --tracker-script "-m src.t
 ```
 demo/run_demo.py              C7 – demo một lệnh + dashboard
 docs/                         hợp đồng giao tiếp, phân công
+docs/report-role-c.md         C – chương Churn / Thí nghiệm & đánh giá / Kết luận & hướng phát triển
+docs/review-A-by-C.md         C – review chéo code của A
+docs/issues-from-C.md         C – lỗi/lệch hợp đồng gửi A và B
+deploy/                       preflight.ps1 (kiểm tra trước demo), run_all.ps1 (chạy kiểm thử + thí nghiệm + demo)
 scenarios/*.yaml              C1/C6 – kịch bản
 src/sim/launcher.py           C1 – orchestrator
 src/sim/churn.py              C2 – Poisson / Exponential / Pareto / flash crowd / mass departure
@@ -202,7 +204,7 @@ src/sim/run_experiments.py    C6 – chạy 5 thí nghiệm; report.py vẽ bi�
 src/sim/stub_peer.py          StubPeer – peer BitTorrent tối giản nhưng thật (TCP, SHA-1, rarest-first, choke, throttle)
 src/sim/stub_tracker.py       StubTracker – tracker HTTP tối giản (announce, scrape, TTL)
 src/sim/common.py, procutil.py  schema log, dữ liệu tất định, metainfo, quản lý tiến trình đa nền tảng
-src/torrent/, src/storage/    B1, B2 (Role B)
+src/torrent/, src/storage/, src/piece_picker/, src/peer/   B1–B7 (Role B)
 tests/test_sim_modules.py     unit test của C;  tests/test_metainfo.py, test_storage.py của B
 tests/e2e/run_all.py          C5 – bộ kiểm thử một lệnh
 results/                      CSV, biểu đồ, analysis.md
